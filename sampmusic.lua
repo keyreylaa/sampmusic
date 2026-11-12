@@ -152,7 +152,7 @@ function Fs.read(path, offset, length)
 end
 
 --- Ukuran berkas tanpa lfs: buka dan seek ke akhir.
-local function fileSize(path)
+local function fileSizeOf(path)
     local f = io.open(path, 'rb')
     if not f then return nil end
     local size = f:seek('end')
@@ -166,7 +166,7 @@ local function acceptPath(dir, fullPath, found)
     local ext = name:match('%.([%w]+)$')
     ext = ext and ext:lower() or ''
     if not CFG.extensions[ext] then return end
-    local size = fileSize(fullPath)
+    local size = fileSizeOf(fullPath)
     if not size or size <= 0 then return end
     found[#found + 1] = {
         path = fullPath,
@@ -213,12 +213,6 @@ local function u16(s, off)
     local a, b = s:byte(off + 1, off + 2)
     if not a then return nil end
     return a + b * 256
-end
-
-local function u24(s, off)
-    local a, b, c = s:byte(off + 1, off + 3)
-    if not a then return nil end
-    return a + b * 256 + c * 65536
 end
 
 local function u24be(s, off)
@@ -408,7 +402,7 @@ local function parseId3v2(path, baseOffset, head)
             result[field] = decodeText(content:sub(2), content:byte(1) or 0)
         elseif (id == 'APIC' or id == 'PIC') and not result.artwork then
             local encoding = content:byte(1) or 0
-            local mime = 'image/jpeg'
+            local mime
             if id == 'PIC' then
                 local format = content:sub(2, 4)
                 mime = (format == 'PNG') and 'image/png' or 'image/jpeg'
@@ -1644,22 +1638,6 @@ local function drawRepeatIcon(dl, x, y, size, color)
         imgui.ImVec2(x + size, y + size * 0.88), color, t)
 end
 
-local function drawArrowIcon(dl, x, y, size, color, up)
-    local t = math.max(1, size * 0.14)
-    local cx = x + size * 0.5
-    if up then
-        dl:AddLine(imgui.ImVec2(cx - size * 0.30, y + size * 0.62),
-            imgui.ImVec2(cx, y + size * 0.32), color, t)
-        dl:AddLine(imgui.ImVec2(cx, y + size * 0.32),
-            imgui.ImVec2(cx + size * 0.30, y + size * 0.62), color, t)
-    else
-        dl:AddLine(imgui.ImVec2(cx - size * 0.30, y + size * 0.38),
-            imgui.ImVec2(cx, y + size * 0.68), color, t)
-        dl:AddLine(imgui.ImVec2(cx, y + size * 0.68),
-            imgui.ImVec2(cx + size * 0.30, y + size * 0.38), color, t)
-    end
-end
-
 local function drawCrossIcon(dl, x, y, size, color)
     local t = math.max(1, size * 0.12)
     dl:AddLine(imgui.ImVec2(x + size * 0.22, y + size * 0.22),
@@ -1970,12 +1948,12 @@ local function drawSidebar()
     local width = imgui.GetContentRegionAvail().x
     local rowH = 40 * S
     local iconSize = 17 * S
+    local dl = imgui.GetWindowDrawList()
 
     for _, page in ipairs(PAGES) do
         local pressed = imgui.InvisibleButton('##nav_' .. page.key,
             imgui.ImVec2(width, rowH))
         local rmin, rmax = imgui.GetItemRectMin(), imgui.GetItemRectMax()
-        local dl = imgui.GetWindowDrawList()
         local active = (Ui.page == page.key)
 
         if active then
