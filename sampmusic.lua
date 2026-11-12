@@ -800,62 +800,82 @@ function Art.findExternalCover(audioPath)
     return nil
 end
 
+--- Buat texture artwork.
+--- Mengembalikan texture dan flag 'final': true kalau tidak perlu dicoba lagi.
+--- [SENA-FIX] Texture dibuat lewat renderer, bukan imgui.CreateTextureFromFile.
+--- Fungsi mimgui itu membungkus ImTextureID dengan ffi.gc, dan finalizernya
+--- memanggil renderer:ReleaseTexture -> RwRasterDestroy, yang meledakkan game
+--- (SIGSEGV di _rwOpenGLRasterDestroy) saat skrip dimuat ulang. Raster yang
+--- diambil langsung dari renderer tidak punya finalizer, jadi tidak ada
+--- pelepasan otomatis yang bisa membuat crash.
 local function createTexture(art)
-    if not art then return nil end
+    if not art then return nil, true end
 
     -- [SENA-FIX] Renderer mimgui baru ada setelah frame pertama. Skrip uji
     -- gambar (monet-image-test.lua) menunggu imgui.IsInitialized() sebelum
     -- memuat texture; di sini pemuatan bisa terjadi di frame pertama, saat
     -- renderer belum dibuat. Tunggu sampai siap, jangan memuat lebih awal.
     if not (type(imgui.IsInitialized) == 'function' and imgui.IsInitialized()) then
-        return nil
+        return nil, false
     end
 
+    local renderer = imgui.GetRenderer and imgui.GetRenderer()
+    if not renderer then return nil, false end
+
     if art.path then
-        local ok, tex = pcall(imgui.CreateTextureFromFile, art.path)
-        if ok then return tex end
-        return nil
+        local ok, tex = pcall(function() return renderer:CreateTextureFromFile(art.path) end)
+        if ok and tex then return tex, true end
+        return nil, true
     end
 
     if art.file and art.length and art.length > 0 and art.length <= CFG.artworkMaxSize then
         local bytes = Fs.read(art.file, art.offset, art.length)
-        if not bytes or #bytes == 0 then return nil end
+        if not bytes or #bytes == 0 then return nil, true end
         local buffer = ffi.new('uint8_t[?]', #bytes)
         ffi.copy(buffer, bytes)
-        local ok, tex = pcall(imgui.CreateTextureFromFileInMemory, buffer, #bytes)
-        if ok then return tex end
+        local address = tonumber(ffi.cast('uintptr_t', buffer))
+        local ok, tex = pcall(function()
+            return renderer:CreateTextureFromFileInMemory(address, #bytes)
+        end)
+        if ok and tex then return tex, true end
+        return nil, true
     end
 
-    return nil
+    return nil, true
 end
 
---- Tandai texture dipakai pada frame ini.
---- Pelepasan TIDAK boleh terjadi di sini: draw list frame berjalan masih
---- menunjuk texture tersebut, dan RwRasterDestroy akan membebaskannya.
+--- Texture artwork untuk sebuah lagu.
+--- Pencarian artwork (tag atau berkas cover di sampingnya) hanya sekali per
+--- lagu: diulang tiap frame, setiap baris pustaka memicu ~15 stat berkas per
+--- frame dan FPS turun drastis.
+--- Texture tidak pernah dilepas: RwRasterDestroy meledakkan game (SIGSEGV di
+--- _rwOpenGLRasterDestroy) dan mimgui hanya bisa melepasnya lewat finalizer
+--- ffi.gc. Raster dibiarkan hidup sampai proses selesai.
 function Art.textureFor(track)
     if not track then return nil end
 
     local key = track.path
     local entry = Art.cache[key]
-    if entry then return entry.tex end
-
-    local art = track.artwork
-    if not art then
-        local cover = Art.findExternalCover(track.path)
-        if cover then art = { path = cover } end
+    if not entry then
+        local art = track.artwork
+        if not art then
+            local cover = Art.findExternalCover(track.path)
+            if cover then art = { path = cover } end
+        end
+        entry = { art = art }
+        Art.cache[key] = entry
     end
-    if not art then return nil end
 
-    local tex = createTexture(art)
-    if not tex then return nil end
+    if not entry.art then return nil end
+    if entry.tex then return entry.tex end
+    if entry.failed then return nil end
 
-    -- Texture disimpan seumur hidup proses. mimgui membungkus ImTextureID
-    -- dengan ffi.gc, dan finalizernya memanggil renderer:ReleaseTexture ->
-    -- RwRasterDestroy, yang mematikan game (SIGSEGV di _rwOpenGLRasterDestroy,
-    -- fault 0x2b) untuk setiap texture yang dibuat dari memori. Skrip uji
-    -- gambar (monet-image-test.lua) juga tidak pernah melepas texture dan
-    -- tidak pernah crash. Jangan jatuhkan referensi ini.
-    Art.cache[key] = { tex = tex }
+    local tex, final = createTexture(entry.art)
+    if tex then
+        entry.tex = tex
+    elseif final then
+        entry.failed = true
+    end
     return tex
 end
 
@@ -1997,9 +2017,11 @@ local function drawNowPlayingCard()
     local art = height - pad * 2
     local texture = track and Art.textureFor(track) or nil
     if texture then
+        -- [SENA-FIX] AddImageRounded di mimgui tidak punya nilai default untuk
+        -- uv_a/uv_b/col (berbeda dari AddImage), jadi harus diberi eksplisit.
         dl:AddImageRounded(texture, imgui.ImVec2(origin.x + pad, origin.y + pad),
             imgui.ImVec2(origin.x + pad + art, origin.y + pad + art),
-            nil, nil, nil, 6 * S)
+            imgui.ImVec2(0, 0), imgui.ImVec2(1, 1), 0xFFFFFFFF, 6 * S)
     else
         dl:AddRectFilled(imgui.ImVec2(origin.x + pad, origin.y + pad),
             imgui.ImVec2(origin.x + pad + art, origin.y + pad + art),

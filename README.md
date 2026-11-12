@@ -69,13 +69,26 @@ Library, Queue, Settings, dan About menampilkan isinya saja.
   Metadata dibaca dari header ID3v2/ID3v1, FLAC, Ogg Vorbis, dan WAV. Durasi MP3 dihitung
   dari header frame-nya.
 - **Sampul** diambil dari gambar di dalam tag (APIC/PIC) atau dari berkas sampul di samping
-  lagunya. Texture dibuat sesuai kebutuhan, hanya untuk baris yang terlihat, dan dilepas
-  saat tidak dipakai.
+  lagunya. Pencarian sampul hanya sekali per lagu: diulang tiap frame, setiap baris
+  pustaka memicu stat berkas tiap frame dan FPS turun drastis. Texture tidak pernah
+  dilepas — `RwRasterDestroy` pada loader bisa membuat game crash.
 - **Audio** memakai BASS lewat API loader (`loadAudioStream`, `setAudioStreamState`, dan
   sejenisnya). Posisi lagu dibaca lewat FFI ke `libbass.so` supaya presisi, karena API loader
   tidak menyediakannya.
 - **Antarmuka** memakai mimgui. Ukuran semua komponen mengikuti skala layar
   (`MONET_DPI_SCALE`, atau resolusi layar kalau variabel itu tidak ada).
+
+## Uji
+
+Skrip bisa dijalankan di luar perangkat, tanpa HP:
+
+```sh
+luajit tests/test_gui.lua sampmusic.lua
+```
+
+Harnessnya memalsukan API loader dan mimgui, menggambar semua halaman, mengklik tombolnya,
+lalu memeriksa dua hal yang pernah membuat game crash: argumen `nil` ke fungsi gambar
+mimgui, dan pencarian sampul yang diulang tiap frame.
 
 ## Kalau ada yang tidak jalan
 
@@ -148,7 +161,7 @@ penggunaan tertentu, bacalah teks resminya di
 
 ## Kontribusi
 
-Fork, pull request, atau laporan bug sangat welcome. yang assists:
+Fork, pull request, atau laporan bug sangat welcome. Bantuan yang berguna:
 - bug di pembaca metadata (ID3, FLAC, Ogg, WAV);
 - dukungan format lain;
 - bahasa antarmuka selain bahasa Indonesia.
