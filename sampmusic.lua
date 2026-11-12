@@ -60,7 +60,6 @@ local CFG = {
     extensions     = { mp3 = true, wav = true, wave = true, ogg = true,
                        oga = true, flac = true, aif = true, aiff = true },
     scanBudget     = 2,        -- berkas yang diproses per frame saat pemindaian
-    artworkCache   = 16,       -- jumlah texture artwork yang boleh hidup
     artworkMaxSize = 4 * 1024 * 1024,
     tagMaxSize     = 8 * 1024 * 1024,
     tagReadLimit   = 2 * 1024 * 1024,   -- tag lebih besar dari ini dilewati
@@ -790,7 +789,6 @@ local COVER_NAMES = {
 
 function Art.init()
     Art.cache = {}
-    Art.frame = 0
 end
 
 --- Cari berkas cover di samping berkas audio.
@@ -845,10 +843,7 @@ function Art.textureFor(track)
 
     local key = track.path
     local entry = Art.cache[key]
-    if entry then
-        entry.frame = Art.frame
-        return entry.tex
-    end
+    if entry then return entry.tex end
 
     local art = track.artwork
     if not art then
@@ -860,43 +855,14 @@ function Art.textureFor(track)
     local tex = createTexture(art)
     if not tex then return nil end
 
-    Art.cache[key] = { tex = tex, frame = Art.frame }
+    -- Texture disimpan seumur hidup proses. mimgui membungkus ImTextureID
+    -- dengan ffi.gc, dan finalizernya memanggil renderer:ReleaseTexture ->
+    -- RwRasterDestroy, yang mematikan game (SIGSEGV di _rwOpenGLRasterDestroy,
+    -- fault 0x2b) untuk setiap texture yang dibuat dari memori. Skrip uji
+    -- gambar (monet-image-test.lua) juga tidak pernah melepas texture dan
+    -- tidak pernah crash. Jangan jatuhkan referensi ini.
+    Art.cache[key] = { tex = tex }
     return tex
-end
-
---- Buang texture yang tidak dipakai sejak frame sebelumnya, lalu yang paling
---- lama tidak dipakai bila jumlahnya masih melebihi batas. Texture TIDAK
---- dilepas di sini: mimgui membungkus ImTextureID dengan ffi.gc dan
---- finalizernya adalah satu-satunya pemanggil renderer:ReleaseTexture.
---- Memanggil imgui.ReleaseTexture dari skrip membuat raster dibebaskan dua
---- kali (skrip + finalizer) dan game mati di _rwOpenGLRasterDestroy (SIGSEGV).
-function Art.collectGarbage()
-    local previous = Art.frame - 1
-    local count = 0
-    for key, entry in pairs(Art.cache) do
-        if entry.frame < previous then
-            Art.cache[key] = nil
-        else
-            count = count + 1
-        end
-    end
-    while count > CFG.artworkCache do
-        local oldestKey, oldestFrame = nil, math.huge
-        for key, entry in pairs(Art.cache) do
-            if entry.frame < oldestFrame then
-                oldestKey, oldestFrame = key, entry.frame
-            end
-        end
-        if not oldestKey then break end
-        Art.cache[oldestKey] = nil
-        count = count - 1
-    end
-end
-
-function Art.releaseAll()
-    for key in pairs(Art.cache) do
-        Art.cache[key] = nil    -- ffi.gc finalizer yang melepas, sekali saja
-    end
 end
 
 local BASS_POS_BYTE = 0
@@ -2472,14 +2438,10 @@ function Gui.draw()
 end
 
 -- Loader menggambar jendela ini pada callback frame render.
--- Callback before-frame berjalan sebelum frame dimulai: di situ texture yang
--- tidak dipakai dilepas, karena draw list belum menunjuk apa pun.
 imgui.OnFrame(
     function() return Ui.open end,
     function(self)
         self.HideCursor = true
-        Art.frame = Art.frame + 1
-        Art.collectGarbage()
     end,
     function(self) Gui.draw() end
 )
@@ -2564,7 +2526,8 @@ function main()
     end
 end
 
---- Dipanggil loader saat skrip dihentikan: hentikan audio dan lepas texture.
+--- Dipanggil loader saat skrip dihentikan: hentikan audio.
+--- Texture TIDAK dilepas (lihat catatan di Art.textureFor).
 --- Dipanggil untuk setiap skrip, jadi cek dulu skrip mana yang berakhir.
 function onScriptTerminate(terminated)
     if type(terminated) == 'table' and type(thisScript) == 'function' then
@@ -2572,5 +2535,4 @@ function onScriptTerminate(terminated)
         if terminated.id ~= mine.id or terminated.filename ~= mine.filename then return end
     end
     Player.closeStream()
-    Art.releaseAll()
 end
