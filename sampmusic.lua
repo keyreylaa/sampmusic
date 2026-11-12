@@ -31,75 +31,6 @@ local ffi = require 'ffi'
 local bit = require 'bit'
 local imgui = require 'mimgui'
 
--- [SENA-TRACE] Jejak panggilan API pemuat.
--- Sampai sekarang crash-nya terjadi di dalam libmonetloader (bukan di libGTASA dan
--- bukan di libsamp), di sebuah pool yang membongkar isinya, dan skrip yang jalan
--- saat itu selalu "SAMP MUSIC". Yang belum diketahui: API mana yang dipanggil
--- tepat sebelum proses mati.
---
--- Blok ini membungkus API audio dan tekstur, mencatat panggilannya ke log loader.
--- Karena klien menyalin ekor log loader ke laporan crash, baris terakhir sebelum
--- SIGSEGV akan menyebut API dan parameternya.
---
--- Matiin jejak: set traceEnabled = false di bawah. Hapus blok ini kalau tidak perlu.
-local traceEnabled = true
-local function traceCall(name, fn)
-    if not traceEnabled or type(fn) ~= 'function' then
-        return fn
-    end
-
-    local calls = 0
-    -- API gambar dan audio selalu dicatat: kalau crash-nya di jalur itu,
-    -- baris terakhir menyebut panggilan yang mati.
-    local always = name:find('Texture') or name:find('Audio') or name:find('audio') or name:find('image')
-    return function(...)
-        local count = select('#', ...)
-        local parts = {}
-        for i = 1, count do
-            parts[i] = tostring((select(i, ...)))
-        end
-        calls = calls + 1
-        if always or calls <= 3 then
-            print(('[trace] %s(%s)'):format(name, table.concat(parts, ', ')))
-        elseif calls == 4 then
-            print(('[trace] %s(...) panggilan berikutnya tidak dicatat'):format(name))
-        end
-        return fn(...)
-    end
-end
-
-for _, name in ipairs({
-    'loadAudioStream', 'releaseAudioStream', 'load3dAudioStream',
-    'getAudioStreamLength', 'getAudioStreamState', 'getAudioStreamVolume',
-    'setAudioStreamState', 'setAudioStreamPosition', 'setAudioStreamVolume',
-    'monet_get_audiostream_handle',
-}) do
-    _G[name] = traceCall(name, _G[name])
-end
-
-imgui.CreateTextureFromFile = traceCall('imgui.CreateTextureFromFile', imgui.CreateTextureFromFile)
-imgui.CreateTextureFromFileInMemory = traceCall('imgui.CreateTextureFromFileInMemory', imgui.CreateTextureFromFileInMemory)
-imgui.ReleaseTexture = traceCall('imgui.ReleaseTexture', imgui.ReleaseTexture)
-
--- Semua fungsi pemuat lain (selain modul tabel seperti ffi/bit/imgui) ikut dicatat,
--- tapi dibatasi: tiga panggilan pertama per nama, sisanya hanya dihitung. Dengan itu
--- log tetap terbaca dan tetap terlihat API mana yang dipakai skrip ini.
-local traceStandard = {
-    print = true, type = true, pairs = true, ipairs = true, next = true, select = true,
-    tonumber = true, tostring = true, pcall = true, xpcall = true, error = true,
-    assert = true, setmetatable = true, getmetatable = true, rawget = true, rawset = true,
-    rawequal = true, rawlen = true, require = true, collectgarbage = true, load = true,
-    loadfile = true, loadstring = true, dofile = true, unpack = true, newproxy = true,
-    gcinfo = true, module = true, _G = true, _VERSION = true, wait = true,
-    setmaxn = true, getfenv = true, setfenv = true,
-}
-
-for name, value in pairs(_G) do
-    if type(value) == 'function' and not traceStandard[name] then
-        _G[name] = traceCall(name, value)
-    end
-end
--- [SENA-TRACE] selesai
 
 -- Metadata skrip (dibaca loader lewat Script Manager).
 if type(script_name) == 'function' then
@@ -933,38 +864,38 @@ function Art.textureFor(track)
     return tex
 end
 
---- Lepas texture yang tidak dipakai sejak frame sebelumnya, lalu yang paling
---- lama tidak dipakai bila jumlahnya masih melebihi batas.
---- Wajib dipanggil SEBELUM frame dimulai (callback before-frame mimgui),
---- saat tidak ada draw list yang menunjuk texture.
+--- Buang texture yang tidak dipakai sejak frame sebelumnya, lalu yang paling
+--- lama tidak dipakai bila jumlahnya masih melebihi batas. Texture TIDAK
+--- dilepas di sini: mimgui membungkus ImTextureID dengan ffi.gc dan
+--- finalizernya adalah satu-satunya pemanggil renderer:ReleaseTexture.
+--- Memanggil imgui.ReleaseTexture dari skrip membuat raster dibebaskan dua
+--- kali (skrip + finalizer) dan game mati di _rwOpenGLRasterDestroy (SIGSEGV).
 function Art.collectGarbage()
     local previous = Art.frame - 1
-
+    local count = 0
     for key, entry in pairs(Art.cache) do
         if entry.frame < previous then
-            pcall(imgui.ReleaseTexture, entry.tex)
             Art.cache[key] = nil
+        else
+            count = count + 1
         end
     end
-
-    while true do
-        local count, oldestKey, oldestFrame = 0, nil, nil
+    while count > CFG.artworkCache do
+        local oldestKey, oldestFrame = nil, math.huge
         for key, entry in pairs(Art.cache) do
-            count = count + 1
-            if entry.frame < previous and (not oldestFrame or entry.frame < oldestFrame) then
+            if entry.frame < oldestFrame then
                 oldestKey, oldestFrame = key, entry.frame
             end
         end
-        if count <= CFG.artworkCache or not oldestKey then break end
-        pcall(imgui.ReleaseTexture, Art.cache[oldestKey].tex)
+        if not oldestKey then break end
         Art.cache[oldestKey] = nil
+        count = count - 1
     end
 end
 
 function Art.releaseAll()
-    for key, entry in pairs(Art.cache) do
-        pcall(imgui.ReleaseTexture, entry.tex)
-        Art.cache[key] = nil
+    for key in pairs(Art.cache) do
+        Art.cache[key] = nil    -- ffi.gc finalizer yang melepas, sekali saja
     end
 end
 
@@ -2464,7 +2395,7 @@ local function drawFull()
 
     imgui.SameLine(0, 8 * S)
 
-    local mainX = imgui.GetCursorScreenPos().x
+    local barX = imgui.GetCursorPosX()
     local mainW = imgui.GetContentRegionAvail().x
 
     pushColor(imgui.Col.ChildBg, PALETTE.bg)
@@ -2473,12 +2404,13 @@ local function drawFull()
     drawPage()
     imgui.EndChild()
 
-    -- playback bar: satu baris di bawah area konten, lebarnya area konten
-    imgui.SetCursorPosX(mainX)
+    -- playback bar: satu baris di bawah area konten, sejajar area konten
+    imgui.SetCursorPosX(barX)
     local dl = imgui.GetWindowDrawList()
+    local barOrigin = imgui.GetCursorScreenPos()
     dl:AddRectFilled(
-        imgui.ImVec2(mainX, imgui.GetCursorPosY() - 6 * S),
-        imgui.ImVec2(mainX + mainW, imgui.GetCursorPosY() + barH), PALETTE.surface, 10 * S)
+        imgui.ImVec2(barOrigin.x, barOrigin.y - 6 * S),
+        imgui.ImVec2(barOrigin.x + mainW, barOrigin.y + barH), PALETTE.surface, 10 * S)
     imgui.SetCursorPosY(imgui.GetCursorPosY() + 4 * S)
     drawPlaybackBar()
 
