@@ -8,15 +8,17 @@ memutar berkas lokal maupun stream URL, dan menampilkan semuanya lewat **mimgui*
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│ ♪ SAMP MUSIC                                      –   ✕    │
+│ ♪ SAMP MUSIC ————————————————————————————————╱   –   ✕  │
 ├──────────────┬─────────────────────────────────────────────┤
-│ ♪ Player      │  [ artwork ]  judul lagu                   │
-│ ▤ Library     │               artis                        │
-│ ☰ Queue       │               00:00 / 03:21                 │
+│ ♪ Player      │  [ artwork ]  Tidak ada lagu       ▁▃▅▂▇▃  │
+│ ▤ Library     │               artis                       ▂▅▇▃▅▂  │
+│ ☰ Queue       │               00:00 / 03:21               ▃▂▇▅▂▃  │
 │ ⚙ Settings    │  ───────────────────────────────────────  │
-│ ⓘ About       │  ⤨  ⏮  ▶  ⏭  🔁   🔊 ──────── 80%        │
-│               │                                             │
-└──────────────┴─────────────────────────────────────────────┘
+│ ⓘ About       │   ⤨  ⏮  ( ▶ )  ⏭  🔁  │  🔊 ──────── 80%  │
+│               │  ▣ Pustaka  🕐 Antrean                      │
+│               │  ┌───────────────────────────────────────┐  │
+│               │  │  daftar lagu                          │  │
+└──────────────┴──┴───────────────────────────────────────┴──┘
 ```
 
 ## Kebutuhan
@@ -50,14 +52,16 @@ memutar berkas lokal maupun stream URL, dan menampilkan semuanya lewat **mimgui*
 
 ## Halaman
 
-- **Player** — sampul, judul, artis, waktu, dan posisi lagu.
+- **Player** — kartu lagu (sampul, judul, artis, waktu, spektrum), baris transport, tab Pustaka/Antrean, dan panel daftar.
 - **Library** — daftar seluruh lagu, dengan pencarian. Klik satu baris untuk memutar.
 - **Queue** — antrean lagu yang akan diputar berikutnya.
 - **Settings** — stream URL, pindai ulang folder, dan lokasi folder musik.
 - **About** — identitas skrip dan lisensinya.
 
-Navigasi memakai sidebar kiri; baris playback (shuffle, previous, play, next, repeat, volume)
-berada di satu baris di bawah area konten dan selalu terlihat, apa pun halaman yang terbuka.
+Navigasi memakai sidebar kiri. Halaman **Player** meniru konsep: kartu lagu yang sedang
+diputar (artwork, judul, artis, waktu, spektrum), baris transport (shuffle, previous,
+play, next, repeat, volume), tab **Pustaka**/**Antrean**, lalu panel daftar. Halaman
+Library, Queue, Settings, dan About menampilkan isinya saja.
 
 ## Cara kerja
 

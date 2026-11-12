@@ -1451,6 +1451,7 @@ function Ui.init()
     Ui.open      = false
     Ui.minimized = false
     Ui.page      = 'player'
+    Ui.tab       = 'library'
     Ui.search    = ''
     Ui.url       = ''
     Ui.messageText = ''
@@ -1643,17 +1644,6 @@ local function drawRepeatIcon(dl, x, y, size, color)
         imgui.ImVec2(x + size, y + size * 0.88), color, t)
 end
 
-local function drawInsertIcon(dl, x, y, size, color)
-    local bar = size * 0.16
-    dl:AddTriangleFilled(
-        imgui.ImVec2(x + size * 0.06, y),
-        imgui.ImVec2(x + size * 0.06, y + size),
-        imgui.ImVec2(x + size * 0.62, y + size * 0.5),
-        color)
-    dl:AddRectFilled(imgui.ImVec2(x + size * 0.72, y),
-        imgui.ImVec2(x + size * 0.72 + bar, y + size), color, 1)
-end
-
 local function drawArrowIcon(dl, x, y, size, color, up)
     local t = math.max(1, size * 0.14)
     local cx = x + size * 0.5
@@ -1719,14 +1709,6 @@ local function ellipsize(text, maxWidth)
     return text:sub(1, low) .. '...'
 end
 
-local function drawLibraryIcon(dl, x, y, size, color)
-    for i = 0, 2 do
-        local top = y + size * (0.12 + i * 0.26)
-        dl:AddRectFilled(imgui.ImVec2(x, top), imgui.ImVec2(x + size, top + size * 0.14),
-            color, size * 0.07)
-    end
-end
-
 local function drawQueueIcon(dl, x, y, size, color)
     for i = 0, 2 do
         local top = y + size * (0.18 + i * 0.28)
@@ -1734,16 +1716,6 @@ local function drawQueueIcon(dl, x, y, size, color)
             color, size * 0.05)
         dl:AddRectFilled(imgui.ImVec2(x + size * 0.34, top + size * 0.06),
             imgui.ImVec2(x + size, top + size * 0.10), color, size * 0.04)
-    end
-end
-
-local function drawSettingsIcon(dl, x, y, size, color)
-    for i = 0, 1 do
-        local top = y + size * (0.28 + i * 0.30)
-        dl:AddRectFilled(imgui.ImVec2(x, top), imgui.ImVec2(x + size, top + size * 0.10),
-            color, size * 0.05)
-        local knob = x + size * (0.30 + i * 0.42)
-        dl:AddCircleFilled(imgui.ImVec2(knob, top + size * 0.05), size * 0.10, color, 0)
     end
 end
 
@@ -1867,48 +1839,137 @@ end
 --- Judul jendela sudah ada di title bar, jadi tidak diulang di sini.
 local drawLibraryList, drawQueueList
 
+--- Ikon tumpukan piring (Library).
+local function drawDatabaseIcon(dl, x, y, size, color)
+    for i = 0, 2 do
+        local top = y + size * (0.06 + i * 0.28)
+        dl:AddRectFilled(imgui.ImVec2(x + size * 0.10, top),
+            imgui.ImVec2(x + size * 0.90, top + size * 0.17), color, size * 0.08)
+    end
+end
+
+--- Ikon roda gigi (Settings).
+local function drawGearIcon(dl, x, y, size, color)
+    local cx, cy = x + size * 0.5, y + size * 0.5
+    dl:AddCircle(imgui.ImVec2(cx, cy), size * 0.24, color, 16, size * 0.14)
+    for i = 0, 7 do
+        local a = i * math.pi / 4
+        local px = cx + math.cos(a) * size * 0.38
+        local py = cy + math.sin(a) * size * 0.38
+        dl:AddRectFilled(imgui.ImVec2(px - size * 0.08, py - size * 0.08),
+            imgui.ImVec2(px + size * 0.08, py + size * 0.08), color, size * 0.03)
+    end
+end
+
+--- Ikon folder (tab Pustaka).
+local function drawFolderIcon(dl, x, y, size, color)
+    dl:AddRectFilled(imgui.ImVec2(x + size * 0.06, y + size * 0.16),
+        imgui.ImVec2(x + size * 0.48, y + size * 0.30), color, size * 0.04)
+    dl:AddRectFilled(imgui.ImVec2(x + size * 0.06, y + size * 0.28),
+        imgui.ImVec2(x + size * 0.94, y + size * 0.86), color, size * 0.08)
+end
+
+--- Ikon jam (tab Antrean).
+local function drawClockIcon(dl, x, y, size, color)
+    local cx, cy = x + size * 0.5, y + size * 0.5
+    dl:AddCircle(imgui.ImVec2(cx, cy), size * 0.36, color, 20, size * 0.10)
+    dl:AddLine(imgui.ImVec2(cx, cy), imgui.ImVec2(cx, cy - size * 0.20), color, size * 0.09)
+    dl:AddLine(imgui.ImVec2(cx, cy), imgui.ImVec2(cx + size * 0.16, cy + size * 0.10),
+        color, size * 0.09)
+end
+
 local PAGES = {
     { key = 'player',   label = 'Player',   icon = drawMusicNote },
-    { key = 'library',  label = 'Library',  icon = drawLibraryIcon },
+    { key = 'library',  label = 'Library',  icon = drawDatabaseIcon },
     { key = 'queue',    label = 'Queue',    icon = drawQueueIcon },
-    { key = 'settings', label = 'Settings', icon = drawSettingsIcon },
+    { key = 'settings', label = 'Settings', icon = drawGearIcon },
     { key = 'about',    label = 'About',    icon = drawInfoIcon },
 }
 
+--- Hiasan garis miring, seperti di pojok kiri bawah konsep.
+local function drawDiagonalAccent(dl, x, y, size, color, thickness)
+    for i = 0, 2 do
+        local off = i * size * 0.26
+        dl:AddLine(imgui.ImVec2(x + off, y + size),
+            imgui.ImVec2(x + off + size, y), color, thickness)
+    end
+end
+
+--- Teks besar: font yang sama, digambar dengan ukuran lebih besar.
+local function bigText(dl, x, y, text, color, scale)
+    local size = imgui.GetFontSize() * (scale or 1.3)
+    dl:AddTextFontPtr(imgui.GetFont(), size, imgui.ImVec2(x, y - size * 0.32), color, text)
+end
+
+--- Pecah teks panjang jadi beberapa baris sesuai lebar yang tersedia.
+local function wrapText(text, width)
+    local lines = {}
+    local current = ''
+    for word in text:gmatch('%S+') do
+        local candidate = current == '' and word or (current .. ' ' .. word)
+        if current ~= '' and imgui.CalcTextSize(candidate).x > width then
+            lines[#lines + 1] = current
+            current = word
+        else
+            current = candidate
+        end
+    end
+    if current ~= '' then lines[#lines + 1] = current end
+    return lines
+end
+
+--- Header: not musik + judul, garis aksen merah, strip diagonal, tombol
+--- minimize dan tutup. Gambar memakai koordinat LAYAR, posisi widget memakai
+--- koordinat window-local; mencampur keduanya membuatJudul dan garis keluar
+--- dari jendela.
 local function drawHeader()
     local S = Runtime.scale()
     local dl = imgui.GetWindowDrawList()
-    local rowY = imgui.GetCursorPosY()
-    local leftX = imgui.GetCursorPosX()
-    local rightX = leftX + imgui.GetContentRegionAvail().x
-    local icon = 22
+    local origin = imgui.GetCursorScreenPos()
+    local baseX = imgui.GetCursorPosX()
+    local baseY = imgui.GetCursorPosY()
+    local height = 42 * S
+    local icon = 22 * S
+    local contentW = imgui.GetContentRegionAvail().x
 
-    drawMusicNote(dl, leftX, rowY + 2 * S, icon * 0.80 * S, PALETTE.accent)
-    local titleX = leftX + icon * S + 10 * S
-    textAt(dl, titleX, rowY + 3 * S, 'SAMP', PALETTE.text)
-    textAt(dl, titleX + imgui.CalcTextSize('SAMP ').x, rowY + 3 * S, 'MUSIC', PALETTE.accent)
+    drawMusicNote(dl, origin.x + 6 * S, origin.y + 9 * S, icon, PALETTE.accent)
 
-    imgui.SetCursorPos(imgui.ImVec2(rightX - icon * S, rowY))
-    local closePressed = iconButton('##close', icon, drawCrossIcon, false, false)
+    local titleX = origin.x + 6 * S + icon + 12 * S
+    local midY = origin.y + height * 0.5
+    bigText(dl, titleX, midY, 'SAMP', PALETTE.text, 1.25)
+    local sampW = imgui.CalcTextSize('SAMP ').x * 1.25
+    bigText(dl, titleX + sampW, midY, 'MUSIC', PALETTE.accent, 1.25)
 
-    imgui.SetCursorPos(imgui.ImVec2(rightX - icon * S * 2 - 8 * S, rowY))
-    local minimizePressed = iconButton('##minimize', icon, drawMinimizeIcon, false, false)
+    local lineStart = titleX + sampW + imgui.CalcTextSize('MUSIC').x * 1.25 + 20 * S
+    local lineEnd = origin.x + contentW - 104 * S
+    if lineEnd > lineStart then
+        dl:AddRectFilled(imgui.ImVec2(lineStart, midY - S),
+            imgui.ImVec2(lineEnd, midY + S), PALETTE.accent)
+    end
+    drawDiagonalAccent(dl, lineEnd + 10 * S, midY - 14 * S, 26 * S, PALETTE.accent, 5 * S)
 
-    local lineY = rowY + icon * S + 6 * S
-    dl:AddRectFilled(imgui.ImVec2(leftX, lineY), imgui.ImVec2(rightX, lineY + 2 * S),
-        PALETTE.accent)
+    local buttonSize = 20 * S
+    local buttonY = baseY + (height - buttonSize) * 0.5
+    local closeX = origin.x + contentW - 14 * S - buttonSize
+    local miniX = closeX - buttonSize - 18 * S
+
+    imgui.SetCursorPos(imgui.ImVec2(baseX + (miniX - origin.x), buttonY))
+    local minimizePressed = iconButton('##minimize', 20, drawMinimizeIcon, false, false)
+    imgui.SetCursorPos(imgui.ImVec2(baseX + (closeX - origin.x), buttonY))
+    local closePressed = iconButton('##close', 20, drawCrossIcon, false, false)
 
     if minimizePressed then Ui.minimized = not Ui.minimized end
     if closePressed then Ui.open = false end
 
-    imgui.SetCursorPos(imgui.ImVec2(leftX, lineY + 2 * S))
+    imgui.SetCursorPos(imgui.ImVec2(baseX, baseY + height + 4 * S))
 end
 
+--- Sidebar kiri: navigasi dengan ikon; item aktif merah.
 local function drawSidebar()
     local S = Runtime.scale()
     local width = imgui.GetContentRegionAvail().x
-    local rowH = 38 * S
-    local iconSize = 16 * S
+    local rowH = 40 * S
+    local iconSize = 17 * S
 
     for _, page in ipairs(PAGES) do
         local pressed = imgui.InvisibleButton('##nav_' .. page.key,
@@ -1925,81 +1986,310 @@ local function drawSidebar()
             dl:AddRectFilled(rmin, rmax, PALETTE.surfaceHi, 8 * S)
         end
 
-        page.icon(dl, rmin.x + 12 * S, rmin.y + (rowH - iconSize) * 0.5, iconSize,
+        page.icon(dl, rmin.x + 14 * S, rmin.y + (rowH - iconSize) * 0.5, iconSize,
             active and PALETTE.accent or PALETTE.textDim)
-        textAt(dl, rmin.x + 12 * S + iconSize + 10 * S,
+        textAt(dl, rmin.x + 14 * S + iconSize + 12 * S,
             rmin.y + (rowH - lineHeight()) * 0.5, page.label,
             active and PALETTE.text or PALETTE.textDim)
 
         if pressed then Ui.page = page.key end
     end
+
+    local winPos = imgui.GetWindowPos()
+    local winSize = imgui.GetWindowSize()
+    drawDiagonalAccent(dl, winPos.x + 8 * S, winPos.y + winSize.y - 74 * S,
+        62 * S, PALETTE.accentDark, 6 * S)
+end
+
+--- Kartu "sedang diputar": artwork, judul, artis, waktu, dan spektrum.
+local function drawNowPlayingCard()
+    local S = Runtime.scale()
+    local dl = imgui.GetWindowDrawList()
+    local origin = imgui.GetCursorScreenPos()
+    local width = imgui.GetContentRegionAvail().x
+    local height = 108 * S
+    local pad = 12 * S
+    local track = Player.current
+
+    dl:AddRectFilled(origin, imgui.ImVec2(origin.x + width, origin.y + height),
+        PALETTE.surface, 10 * S)
+    dl:AddRect(origin, imgui.ImVec2(origin.x + width, origin.y + height),
+        PALETTE.border, 10 * S, nil, 1 * S)
+
+    local art = height - pad * 2
+    local texture = track and Art.textureFor(track) or nil
+    if texture then
+        dl:AddImageRounded(texture, imgui.ImVec2(origin.x + pad, origin.y + pad),
+            imgui.ImVec2(origin.x + pad + art, origin.y + pad + art),
+            nil, nil, nil, 6 * S)
+    else
+        dl:AddRectFilled(imgui.ImVec2(origin.x + pad, origin.y + pad),
+            imgui.ImVec2(origin.x + pad + art, origin.y + pad + art),
+            PALETTE.surfaceHi, 6 * S)
+        drawMusicNote(dl, origin.x + pad + art * 0.32, origin.y + pad + art * 0.28,
+            art * 0.36, PALETTE.accent)
+    end
+
+    local textX = origin.x + pad + art + 18 * S
+    local spectrumW = 160 * S
+    local textW = origin.x + width - pad - spectrumW - textX
+    local title = track and track.title or 'Tidak ada lagu'
+    local artist = track and (track.artist or '-') or '-'
+    bigText(dl, textX, origin.y + pad + 22 * S, ellipsize(title, textW), PALETTE.text, 1.3)
+    textAt(dl, textX, origin.y + pad + 44 * S, ellipsize(artist, textW), PALETTE.textDim)
+    local timeText = formatTime(Player.position) .. ' / ' .. formatDuration(Player.duration)
+    textAt(dl, textX, origin.y + height - pad - 4 * S, timeText, PALETTE.textDim)
+
+    local bars = 18
+    local barW = 5 * S
+    local gap = 3 * S
+    local sx = origin.x + width - pad - (bars * (barW + gap))
+    for i = 0, bars - 1 do
+        local h = (0.22 + 0.68 * ((i * 7) % 9) / 8) * (height - 48 * S)
+        local color = (i % 3 == 0) and PALETTE.accent or PALETTE.surfaceHi
+        local bx = sx + i * (barW + gap)
+        dl:AddRectFilled(imgui.ImVec2(bx, origin.y + height - pad - h),
+            imgui.ImVec2(bx + barW, origin.y + height - pad), color, 1)
+    end
+
+    imgui.Dummy(imgui.ImVec2(width, height))
+end
+
+--- Slider volume: jalur merah dengan knob, digeser dengan sentuh.
+local function drawVolumeSlider(width)
+    local S = Runtime.scale()
+    local height = 18 * S
+    local origin = imgui.GetCursorScreenPos()
+    local io = imgui.GetIO()
+
+    local pressed = imgui.InvisibleButton('##volume', imgui.ImVec2(width, height))
+    if pressed then Gui.draggingVolume = true end
+    if Gui.draggingVolume and not io.MouseDown[0] then Gui.draggingVolume = false end
+
+    local value = Player.muted and 0 or Player.volume
+    if Gui.draggingVolume then
+        local t = (io.MousePos.x - origin.x) / math.max(width, 1)
+        Player.setVolume(math.max(0, math.min(1, t)))
+        value = Player.muted and 0 or Player.volume
+    end
+
+    local dl = imgui.GetWindowDrawList()
+    local cy = origin.y + height * 0.5
+    dl:AddRectFilled(imgui.ImVec2(origin.x, cy - 2 * S),
+        imgui.ImVec2(origin.x + width, cy + 2 * S), PALETTE.surfaceHi, 2 * S)
+    dl:AddRectFilled(imgui.ImVec2(origin.x, cy - 2 * S),
+        imgui.ImVec2(origin.x + width * value, cy + 2 * S), PALETTE.accent, 2 * S)
+    dl:AddCircleFilled(imgui.ImVec2(origin.x + width * value, cy), 6 * S, PALETTE.accent, 0)
+end
+
+--- Baris transport: shuffle, sebelumnya, play, berikutnya, repeat, volume.
+local function drawTransport()
+    local S = Runtime.scale()
+    local width = imgui.GetContentRegionAvail().x
+    local size = 32 * S
+    local gap = 16 * S
+    local volumeW = 150 * S
+    local percentW = 46 * S
+
+    local total = size * 5 + gap * 4 + 40 * S + 22 * S + volumeW + percentW
+    imgui.SetCursorPosX(imgui.GetCursorPosX() + math.max(0, (width - total) * 0.5))
+
+    local function button(id, drawIcon, active, disabled, custom)
+        local pressed = imgui.InvisibleButton(id, imgui.ImVec2(size, size))
+        local rmin, rmax = imgui.GetItemRectMin(), imgui.GetItemRectMax()
+        local dl = imgui.GetWindowDrawList()
+        local hovered = imgui.IsItemHovered()
+        local color = active and PALETTE.accent or (hovered and PALETTE.text or PALETTE.textDim)
+        if disabled then
+            color = PALETTE.border
+            pressed = false
+        end
+        if custom then
+            custom(dl, rmin, rmax, color)
+        else
+            local iconSize = size * 0.56
+            drawIcon(dl, rmin.x + (size - iconSize) * 0.5, rmin.y + (size - iconSize) * 0.5,
+                iconSize, color)
+        end
+        return pressed
+    end
+
+    local hasTrack = Player.current ~= nil
+    local hasQueue = #Queue.items > 0
+
+    if button('##shuffle', drawShuffleIcon, Player.shuffle, false) then
+        Player.toggleShuffle()
+        Ui.message('shuffle %s', Player.shuffle and 'nyala' or 'mati')
+    end
+
+    imgui.SameLine(0, gap)
+    if button('##prev', function(d, x, y, s, color)
+        drawStepIcon(d, x, y, s, color, -1)
+    end, false, not (hasTrack or hasQueue)) then
+        local previous = Queue.previousTrack()
+        if previous then Player.play(previous)
+        elseif Player.current then Player.seekTo(0) end
+    end
+
+    imgui.SameLine(0, gap)
+    if button('##play', nil, false, not hasTrack, function(dl, rmin, rmax, color)
+        local r = size * 0.46
+        local cx, cy = (rmin.x + rmax.x) * 0.5, (rmin.y + rmax.y) * 0.5
+        dl:AddCircle(imgui.ImVec2(cx, cy), r, PALETTE.accent, 24, 2 * S)
+        local tri = r * 1.1
+        if Player.status == 'playing' then
+            drawPauseBars(dl, cx - tri * 0.34, cy - tri * 0.5, tri, PALETTE.text)
+        else
+            drawPlayTriangle(dl, cx - tri * 0.40, cy - tri * 0.5, tri, PALETTE.text)
+        end
+    end) then
+        Player.toggle()
+    end
+
+    imgui.SameLine(0, gap)
+    if button('##next', function(d, x, y, s, color)
+        drawStepIcon(d, x, y, s, color, 1)
+    end, false, not (hasTrack or hasQueue)) then
+        local next = Queue.nextTrack()
+        if next then Player.play(next) end
+    end
+
+    imgui.SameLine(0, gap)
+    if button('##repeat', drawRepeatIcon, Player.repeatMode ~= 'off', false) then
+        Player.cycleRepeat()
+        Ui.message('repeat: %s', Player.repeatMode)
+    end
+
+    imgui.SameLine(0, 20 * S)
+    local dl = imgui.GetWindowDrawList()
+    local sep = imgui.GetCursorScreenPos()
+    dl:AddRectFilled(imgui.ImVec2(sep.x, sep.y + 4 * S),
+        imgui.ImVec2(sep.x + 1 * S, sep.y + size - 4 * S), PALETTE.border)
+
+    imgui.SameLine(0, 16 * S)
+    if button('##mute', function(d, x, y, s, color)
+        drawVolumeIcon(d, x, y, s, color, Player.muted)
+    end, Player.muted, false) then
+        Player.toggleMute()
+    end
+
+    imgui.SameLine(0, 10 * S)
+    drawVolumeSlider(volumeW)
+
+    imgui.SameLine(0, 8 * S)
+    local percent = tostring(math.floor((Player.muted and 0 or Player.volume) * 100)) .. '%'
+    local pw = imgui.CalcTextSize(percent).x
+    local tx = imgui.GetCursorScreenPos()
+    textAt(dl, tx.x, tx.y + (size - lineHeight()) * 0.5, percent, PALETTE.textDim)
+    imgui.Dummy(imgui.ImVec2(pw, size))
+end
+
+--- Tab Pustaka / Antrean.
+local function drawTabs()
+    local S = Runtime.scale()
+    local tabs = {
+        { key = 'library', label = 'Pustaka', icon = drawFolderIcon },
+        { key = 'queue',   label = 'Antrean', icon = drawClockIcon },
+    }
+    for _, tab in ipairs(tabs) do
+        local active = (Ui.tab == tab.key)
+        local width = imgui.CalcTextSize(tab.label).x + 54 * S
+        local pressed = imgui.InvisibleButton('##tab_' .. tab.key,
+            imgui.ImVec2(width, 30 * S))
+        local rmin, rmax = imgui.GetItemRectMin(), imgui.GetItemRectMax()
+        local dl = imgui.GetWindowDrawList()
+
+        if active then
+            dl:AddRectFilled(rmin, rmax, PALETTE.accentDark, 8 * S)
+            dl:AddRectFilled(imgui.ImVec2(rmin.x, rmin.y),
+                imgui.ImVec2(rmin.x + 4 * S, rmin.y + 16 * S), PALETTE.accent)
+        elseif imgui.IsItemHovered() then
+            dl:AddRectFilled(rmin, rmax, PALETTE.surfaceHi, 8 * S)
+        end
+
+        local iconSize = 15 * S
+        tab.icon(dl, rmin.x + 16 * S, rmin.y + (30 * S - iconSize) * 0.5, iconSize,
+            active and PALETTE.accent or PALETTE.textDim)
+        textAt(dl, rmin.x + 16 * S + iconSize + 10 * S,
+            rmin.y + (30 * S - lineHeight()) * 0.5, tab.label,
+            active and PALETTE.text or PALETTE.textDim)
+
+        if pressed then Ui.tab = tab.key end
+        imgui.SameLine(0, 8 * S)
+    end
+    imgui.NewLine()
+end
+
+--- Panel berisi daftar: latar membulat dengan garis tepi.
+local function drawPanel(height, drawContent)
+    local S = Runtime.scale()
+    local width = imgui.GetContentRegionAvail().x
+
+    pushColor(imgui.Col.ChildBg, PALETTE.surface)
+    imgui.BeginChild('##panel', imgui.ImVec2(width, height), true)
+    imgui.PopStyleColor()
+
+    local pos = imgui.GetWindowPos()
+    local size = imgui.GetWindowSize()
+    drawContent()
+    imgui.EndChild()
+
+    local dl = imgui.GetWindowDrawList()
+    dl:AddRect(imgui.ImVec2(pos.x, pos.y),
+        imgui.ImVec2(pos.x + size.x, pos.y + size.y), PALETTE.border, 10 * S, nil, 1 * S)
 end
 
 local function drawPlayerPage()
     local S = Runtime.scale()
-    local track = Player.current
-    local art = 132 * S
-    local pad = 14 * S
-    local width = imgui.GetContentRegionAvail().x
-
-    local origin = imgui.GetCursorScreenPos()
-    local dl = imgui.GetWindowDrawList()
-
-    dl:AddRectFilled(imgui.ImVec2(origin.x, origin.y),
-        imgui.ImVec2(origin.x + width, origin.y + art + pad * 2), PALETTE.surface, 10 * S)
-
-    drawArtwork(dl, track, origin.x + pad, origin.y + pad, art)
-
-    local lh = lineHeight()
-    local textX = origin.x + pad + art + 16 * S
-    local textW = origin.x + width - pad - textX
-    local title = track and track.title or 'Tidak ada lagu'
-    local artist = track and (track.artist or '-') or 'Tekan /music untuk membuka'
-    textAt(dl, textX, origin.y + pad + 4 * S, ellipsize(title, textW), PALETTE.text)
-    textAt(dl, textX, origin.y + pad + 4 * S + lh, ellipsize(artist, textW), PALETTE.textDim)
-
-    local timeText = formatTime(Player.position) .. ' / ' .. formatDuration(Player.duration)
-    local timeW = imgui.CalcTextSize(timeText).x
-    textAt(dl, origin.x + width - pad - timeW, origin.y + art + pad - lh, timeText,
-        PALETTE.textDim)
-
-    imgui.Dummy(imgui.ImVec2(width, art + pad * 2))
-
+    drawNowPlayingCard()
+    imgui.Dummy(imgui.ImVec2(0, 6 * S))
     drawSeekBar()
+    imgui.Dummy(imgui.ImVec2(0, 8 * S))
+    drawTransport()
+    imgui.Dummy(imgui.ImVec2(0, 10 * S))
+    drawTabs()
+
+    local height = math.max(120 * S, imgui.GetContentRegionAvail().y - 4 * S)
+    drawPanel(height, function()
+        if Ui.tab == 'queue' then drawQueueList() else drawLibraryList() end
+    end)
 end
 
 local function drawLibraryPage()
     local S = Runtime.scale()
     if not Gui.searchBuffer then
         Gui.searchBuffer = imgui.new.char[128]()
+        ffi.fill(Gui.searchBuffer, 128, 0)
     end
 
-    imgui.SetNextItemWidth(-92 * S)
+    imgui.SetNextItemWidth(-100 * S)
     imgui.InputText('##search', Gui.searchBuffer, 128)
     Ui.search = ffi.string(Gui.searchBuffer)
 
     imgui.SameLine()
-    if imgui.Button('Muat ulang', imgui.ImVec2(84 * S, 0)) then
+    if imgui.Button('Muat ulang', imgui.ImVec2(90 * S, 0)) then
         Library.startScan()
     end
 
-    imgui.Separator()
-    drawLibraryList()
+    imgui.Dummy(imgui.ImVec2(0, 8 * S))
+    local height = math.max(120 * S, imgui.GetContentRegionAvail().y - 4 * S)
+    drawPanel(height, drawLibraryList)
 end
 
 local function drawQueuePage()
     local S = Runtime.scale()
-    if imgui.Button('Acak', imgui.ImVec2(80 * S, 0)) then
+    if imgui.Button('Acak', imgui.ImVec2(84 * S, 0)) then
         Queue.shuffleOrder()
     end
     imgui.SameLine()
-    if imgui.Button('Kosongkan', imgui.ImVec2(90 * S, 0)) then
+    if imgui.Button('Kosongkan', imgui.ImVec2(96 * S, 0)) then
         Queue.clear()
         Ui.message('antrean dikosongkan')
     end
 
-    imgui.Separator()
-    drawQueueList()
+    imgui.Dummy(imgui.ImVec2(0, 8 * S))
+    local height = math.max(120 * S, imgui.GetContentRegionAvail().y - 4 * S)
+    drawPanel(height, drawQueueList)
 end
 
 local function drawSettingsPage()
@@ -2012,6 +2302,7 @@ local function drawSettingsPage()
 
     if not Gui.urlBuffer then
         Gui.urlBuffer = imgui.new.char[256]()
+        ffi.fill(Gui.urlBuffer, 256, 0)
     end
 
     imgui.SetNextItemWidth(width - 74 * S)
@@ -2059,14 +2350,12 @@ local function drawSettingsPage()
 
     imgui.Dummy(imgui.ImVec2(0, 8 * S))
     local folder = Fs.musicDir
-    local fw = imgui.CalcTextSize(folder).x
     textAt(imgui.GetWindowDrawList(), imgui.GetCursorScreenPos().x,
-        imgui.GetCursorScreenPos().y, folder, PALETTE.textDim)
+        imgui.GetCursorScreenPos().y, ellipsize(folder, width), PALETTE.textDim)
     imgui.Dummy(imgui.ImVec2(0, lineHeight() + 4 * S))
     local hint = 'Letakkan berkas .mp3, .wav, .ogg atau .flac di folder itu.'
-    local hw = imgui.CalcTextSize(hint).x
     textAt(imgui.GetWindowDrawList(), imgui.GetCursorScreenPos().x,
-        imgui.GetCursorScreenPos().y, hint, PALETTE.textDim)
+        imgui.GetCursorScreenPos().y, ellipsize(hint, width), PALETTE.textDim)
     imgui.Dummy(imgui.ImVec2(0, lineHeight()))
 end
 
@@ -2075,11 +2364,14 @@ local function drawAboutPage()
     local dl = imgui.GetWindowDrawList()
     local x = imgui.GetCursorScreenPos().x
     local y = imgui.GetCursorScreenPos().y
+    local width = imgui.GetContentRegionAvail().x
     local lh = lineHeight() + 4 * S
 
     local function line(text, color)
-        textAt(dl, x, y, text, color)
-        y = y + lh
+        for _, part in ipairs(wrapText(text, width)) do
+            textAt(dl, x, y, part, color)
+            y = y + lh
+        end
     end
 
     line('SAMP MUSIC 1.1', PALETTE.text)
@@ -2087,15 +2379,13 @@ local function drawAboutPage()
     line('', PALETTE.textDim)
 
     line('LISENSI: GNU GPL v3', PALETTE.accent)
-    line('Berkas ini perangkat lunak bebas. Anda boleh memakai, menyalin,', PALETTE.textDim)
-    line('mengubah, dan mendistribusikannya, dengan syarat:', PALETTE.textDim)
-    line('  1._memberitahu hak cipta dan lisensi ini ikut disertakan;', PALETTE.textDim)
-    line('  2. menyatakan perubahan yang Anda buat;', PALETTE.textDim)
-    line('  3. mendistribusikan ulang dengan lisensi yang sama (GPL v3).', PALETTE.textDim)
+    line('Berkas ini perangkat lunak bebas. Anda boleh memakai, menyalin, mengubah, dan mendistribusikannya, dengan syarat:', PALETTE.textDim)
+    line('1. Memberitahu hak cipta dan lisensi ini ikut disertakan;', PALETTE.textDim)
+    line('2. Menyatakan perubahan yang Anda buat;', PALETTE.textDim)
+    line('3. Mendistribusikan ulang dengan lisensi yang sama (GPL v3).', PALETTE.textDim)
     line('', PALETTE.textDim)
-    line('Menjual ulang versi yang diubah tidak boleh memakai nama "Sena"', PALETTE.textDim)
-    line('atau lisensi yang lebih ketat. Sumbernya ada di:', PALETTE.textDim)
-    line('github.com/keyreylaa/sampmusic', PALETTE.accent)
+    line('Menjual ulang versi yang diubah tidak boleh memakai nama "Sena" atau lisensi yang lebih ketat.', PALETTE.textDim)
+    line('Sumbernya: github.com/keyreylaa/sampmusic', PALETTE.accent)
     line('README lengkap: ' .. Fs.root .. '/sampmusic-README.md', PALETTE.textDim)
     line('Teks lisensi: ' .. Fs.root .. '/sampmusic-LICENSE.txt', PALETTE.textDim)
 
@@ -2103,6 +2393,7 @@ local function drawAboutPage()
 end
 
 local function drawPage()
+    local S = Runtime.scale()
     if Ui.page == 'player' then
         drawPlayerPage()
     elseif Ui.page == 'library' then
@@ -2110,9 +2401,11 @@ local function drawPage()
     elseif Ui.page == 'queue' then
         drawQueuePage()
     elseif Ui.page == 'settings' then
-        drawSettingsPage()
+        local height = math.max(120 * S, imgui.GetContentRegionAvail().y - 4 * S)
+        drawPanel(height, drawSettingsPage)
     else
-        drawAboutPage()
+        local height = math.max(120 * S, imgui.GetContentRegionAvail().y - 4 * S)
+        drawPanel(height, drawAboutPage)
     end
 end
 
@@ -2127,21 +2420,21 @@ drawLibraryList = function()
         local rmin = imgui.GetCursorScreenPos()
         local width = imgui.GetContentRegionAvail().x
         local emptyH = 120 * S
+        local box = 44 * S
+        local cx = rmin.x + width * 0.5
 
-        dl:AddRectFilled(rmin, imgui.ImVec2(rmin.x + width, rmin.y + emptyH),
-            PALETTE.surface, 10 * S)
-        drawMusicNote(dl, rmin.x + width * 0.5 - 16 * S, rmin.y + 24 * S, 32 * S,
-            PALETTE.textDim)
+        dl:AddRectFilled(imgui.ImVec2(cx - box * 0.5, rmin.y + 10 * S),
+            imgui.ImVec2(cx + box * 0.5, rmin.y + 10 * S + box), PALETTE.surfaceHi, 8 * S)
+        drawMusicNote(dl, cx - box * 0.22, rmin.y + 10 * S + box * 0.28,
+            box * 0.44, PALETTE.textDim)
 
-        local message = Library.state == 'scanning' and 'memindai...'
-            or 'Tidak ada lagu dalam pustaka.'
-        local hint = Library.state == 'scanning' and ''
-            or 'Letakkan berkas musik di folder musik.'
+        local message = Library.state == 'scanning' and 'memindai...' or 'Tidak ada lagu dalam pustaka.'
+        local hint = Library.state == 'scanning' and '' or 'Tambahkan musik ke folder musik Anda.'
         local mw = imgui.CalcTextSize(message).x
-        textAt(dl, rmin.x + (width - mw) * 0.5, rmin.y + 72 * S, message, PALETTE.text)
+        textAt(dl, cx - mw * 0.5, rmin.y + 10 * S + box + 14 * S, message, PALETTE.text)
         if hint ~= '' then
             local hw = imgui.CalcTextSize(hint).x
-            textAt(dl, rmin.x + (width - hw) * 0.5, rmin.y + 72 * S + lineHeight(),
+            textAt(dl, cx - hw * 0.5, rmin.y + 10 * S + box + 14 * S + lineHeight(),
                 hint, PALETTE.textDim)
         end
 
@@ -2166,8 +2459,6 @@ drawLibraryList = function()
             dl:AddRectFilled(rmin, rmax, PALETTE.surfaceHi, 6 * S)
         end
 
-        -- artwork kecil: hanya untuk baris yang benar-benar terlihat, supaya
-        -- texture tidak dibuat lalu dibuang setiap frame
         local clipMin = dl:GetClipRectMin()
         local clipMax = dl:GetClipRectMax()
         local visible = not (rmax.y < clipMin.y or rmin.y > clipMax.y)
@@ -2216,15 +2507,17 @@ drawQueueList = function()
         local rmin = imgui.GetCursorScreenPos()
         local width = imgui.GetContentRegionAvail().x
         local emptyH = 120 * S
+        local box = 44 * S
+        local cx = rmin.x + width * 0.5
 
-        dl:AddRectFilled(rmin, imgui.ImVec2(rmin.x + width, rmin.y + emptyH),
-            PALETTE.surface, 10 * S)
-        drawMusicNote(dl, rmin.x + width * 0.5 - 16 * S, rmin.y + 24 * S, 32 * S,
-            PALETTE.textDim)
+        dl:AddRectFilled(imgui.ImVec2(cx - box * 0.5, rmin.y + 10 * S),
+            imgui.ImVec2(cx + box * 0.5, rmin.y + 10 * S + box), PALETTE.surfaceHi, 8 * S)
+        drawMusicNote(dl, cx - box * 0.22, rmin.y + 10 * S + box * 0.28,
+            box * 0.44, PALETTE.textDim)
 
         local message = 'Antrean kosong.'
         local mw = imgui.CalcTextSize(message).x
-        textAt(dl, rmin.x + (width - mw) * 0.5, rmin.y + 72 * S, message, PALETTE.text)
+        textAt(dl, cx - mw * 0.5, rmin.y + 10 * S + box + 14 * S, message, PALETTE.text)
 
         imgui.Dummy(imgui.ImVec2(width, emptyH))
         return
@@ -2266,80 +2559,13 @@ drawQueueList = function()
     end
 end
 
-local function drawPlaybackBar()
-    local S = Runtime.scale()
-    local size = 24
-    local gap = 8 * S
-    local hasTrack = Player.current ~= nil
-    local hasQueue = #Queue.items > 0
-
-    if iconButton('##shuffle', size, drawShuffleIcon, Player.shuffle, false) then
-        Player.toggleShuffle()
-        Ui.message('shuffle %s', Player.shuffle and 'nyala' or 'mati')
-    end
-
-    imgui.SameLine(0, gap)
-    if iconButton('##prev', size, function(d, x, y, s, color)
-        drawStepIcon(d, x, y, s, color, -1)
-    end, false, false, not (hasTrack or hasQueue)) then
-        local previous = Queue.previousTrack()
-        if previous then Player.play(previous)
-        elseif Player.current then Player.seekTo(0) end
-    end
-
-    imgui.SameLine(0, gap)
-    if iconButton('##play', size, function(d, x, y, s, color)
-        if Player.status == 'playing' then
-            drawPauseBars(d, x, y, s, color)
-        else
-            drawPlayTriangle(d, x, y, s, color)
-        end
-    end, Player.status == 'playing', true, not hasTrack) then
-        Player.toggle()
-    end
-
-    imgui.SameLine(0, gap)
-    if iconButton('##next', size, function(d, x, y, s, color)
-        drawStepIcon(d, x, y, s, color, 1)
-    end, false, false, not (hasTrack or hasQueue)) then
-        local next = Queue.nextTrack()
-        if next then Player.play(next) end
-    end
-
-    imgui.SameLine(0, gap)
-    if iconButton('##repeat', size, drawRepeatIcon, Player.repeatMode ~= 'off', false) then
-        Player.cycleRepeat()
-        Ui.message('repeat: %s', Player.repeatMode)
-    end
-
-    imgui.SameLine(0, 10 * S)
-    if iconButton('##mute', 20, function(d, x, y, s, color)
-        drawVolumeIcon(d, x, y, s, color, Player.muted)
-    end, Player.muted) then
-        Player.toggleMute()
-    end
-
-    -- slider mengisi sisa baris; ImGui menulis persennya di kanan slider
-    if not Gui.volumeValue then
-        Gui.volumeValue = imgui.new.float(Player.volume)
-    end
-    Gui.volumeValue[0] = Player.volume
-    local sliderW = math.max(60 * S, imgui.GetContentRegionAvail().x - 46 * S)
-    imgui.SameLine(0, 6 * S)
-    imgui.SetNextItemWidth(sliderW)
-    if imgui.SliderFloat('##volume', Gui.volumeValue, 0.0, 1.0, '%.0f%%') then
-        Player.setVolume(Gui.volumeValue[0])
-    end
-end
-
 local function drawFull()
     local S = Runtime.scale()
-    -- Jendela tidak boleh melebihi layar; sisa isi digulir oleh ImGui.
-    local width = math.min(560 * S, Runtime.screenWidth - 16 * S)
-    local height = math.min(600 * S, Runtime.screenHeight - 16 * S)
+    local width = math.min(760 * S, Runtime.screenWidth - 24 * S)
+    local height = math.min(470 * S, Runtime.screenHeight - 24 * S)
 
     imgui.SetNextWindowPos(
-        imgui.ImVec2(Runtime.screenWidth - width - 8 * S, 8 * S),
+        imgui.ImVec2(Runtime.screenWidth - width - 12 * S, 12 * S),
         imgui.Cond.FirstUseEver)
     imgui.SetNextWindowSize(imgui.ImVec2(width, height), imgui.Cond.FirstUseEver)
 
@@ -2349,36 +2575,29 @@ local function drawFull()
     drawHeader()
 
     local avail = imgui.GetContentRegionAvail()
-    local sidebarW = math.min(136 * S, width * 0.32)
-    local barH = 40 * S
-    local contentH = math.max(140 * S, avail.y - barH - 8 * S)
+    local sidebarW = math.min(150 * S, width * 0.30)
+    local contentH = math.max(140 * S, avail.y - 6 * S)
 
     pushColor(imgui.Col.ChildBg, PALETTE.bg)
     imgui.BeginChild('##sidebar', imgui.ImVec2(sidebarW, contentH), true)
     imgui.PopStyleColor()
     drawSidebar()
+    local sidePos = imgui.GetWindowPos()
+    local sideSize = imgui.GetWindowSize()
     imgui.EndChild()
 
-    imgui.SameLine(0, 8 * S)
+    local dl = imgui.GetWindowDrawList()
+    dl:AddRectFilled(imgui.ImVec2(sidePos.x + sideSize.x, sidePos.y),
+        imgui.ImVec2(sidePos.x + sideSize.x + 1 * S, sidePos.y + sideSize.y), PALETTE.border)
 
-    local barX = imgui.GetCursorPosX()
+    imgui.SameLine(0, 10 * S)
+
     local mainW = imgui.GetContentRegionAvail().x
-
     pushColor(imgui.Col.ChildBg, PALETTE.bg)
     imgui.BeginChild('##main', imgui.ImVec2(mainW, contentH), true)
     imgui.PopStyleColor()
     drawPage()
     imgui.EndChild()
-
-    -- playback bar: satu baris di bawah area konten, sejajar area konten
-    imgui.SetCursorPosX(barX)
-    local dl = imgui.GetWindowDrawList()
-    local barOrigin = imgui.GetCursorScreenPos()
-    dl:AddRectFilled(
-        imgui.ImVec2(barOrigin.x, barOrigin.y - 6 * S),
-        imgui.ImVec2(barOrigin.x + mainW, barOrigin.y + barH), PALETTE.surface, 10 * S)
-    imgui.SetCursorPosY(imgui.GetCursorPosY() + 4 * S)
-    drawPlaybackBar()
 
     imgui.End()
 end
