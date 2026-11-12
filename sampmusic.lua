@@ -1413,49 +1413,37 @@ function Links.isDirectAudio(url)
 end
 
 --- Buka tautan di aplikasi luar (YouTube / browser).
+---
+--- JANGAN panggil OS_ServiceOpenLink dari libGTASA. Fungsi itu masuk ke
+--- Java client (WarMedia.OpenLink -> startActivity). Kalau tidak ada
+--- aplikasi yang bisa menangani Intent itu, Java melempar
+--- ActivityNotFoundException, dan exception itu TERTINGGAL pending di
+--- JNIEnv thread game. Panggilan JNI berikutnya (loader: input_status
+--- saat sistem keyboard aktif) lalu memicu ART JniAbort -> SIGABRT.
+--- Exception Java bukan error Lua, jadi pcall tidak bisa menangkapnya.
+--- Karena itu tautan disalin ke clipboard, dan pengguna membukanya di
+--- browser sendiri.
 function Links.openExternal(url)
-    if Links.tryGameOpenLink(url) then return true end
     return Links.tryClipboard(url)
 end
 
---- Panggil OS_ServiceOpenLink dari libGTASA.
---- Offset dari dump simbol libGTASA.so build SENA Samp (arm64-v8a).
-local OS_SERVICE_OPENLINK_OFFSET = 0x3221bc
-
-function Links.tryGameOpenLink(url)
-    if type(MONET_GTASA_BASE) ~= 'number' or MONET_GTASA_BASE == 0 then
-        return false
-    end
-
-    local ok = pcall(function()
-        pcall(ffi.cdef, [[ void OS_ServiceOpenLink(const char* url); ]])
-
-        local gta = ffi.load('libGTASA.so')
-        local exported = gta.OS_ServiceOpenLink
-        if exported then
-            exported(url)
-            return
-        end
-
-        -- Symbol tidak diekspor: panggil langsung lewat alamat base + offset.
-        local address = ffi.cast('void(*)(const char*)',
-            ffi.cast('uintptr_t', MONET_GTASA_BASE) + OS_SERVICE_OPENLINK_OFFSET)
-        address(url)
-    end)
-
-    if not ok then
-        Log.once('openlink', 'OS_ServiceOpenLink gagal; tautan disalin ke clipboard.')
-        return false
-    end
-    return true
+--- Teks yang dikirim ke clipboard harus ASCII: NewStringUTF di loader
+--- melempar exception kalau byte-nya bukan UTF-8 yang valid, dan itu
+--- berakhir jadi crash yang sama seperti di atas.
+local function asciiOnly(text)
+    return (text:gsub('[^ -~]', ''))
 end
 
 function Links.tryClipboard(url)
-    local copied = pcall(setClipboardText, url)
+    local safe = asciiOnly(url)
+    if safe == '' then return false end
+
+    local copied = pcall(setClipboardText, safe)
     if copied then
-        Ui.message('tautan disalin ke clipboard')
+        Ui.message('tautan disalin ke clipboard; buka di browser')
         return true
     end
+    Ui.message('gagal menyalin tautan')
     return false
 end
 
@@ -2318,9 +2306,7 @@ local function drawSettingsPage()
     if changed and Ui.url ~= '' then
         local url = Ui.url:gsub('^%s+', ''):gsub('%s+$', '')
         if Links.isYoutube(url) then
-            if Links.openExternal(url) then
-                Ui.message('tautan YouTube dibuka di aplikasi luar')
-            end
+            Links.openExternal(url)
         elseif Links.isDirectAudio(url) then
             local track = { path = url, title = url:match('([^/]+)$'), isUrl = true }
             if Player.play(track) then
