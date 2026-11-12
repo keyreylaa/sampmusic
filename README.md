@@ -55,9 +55,9 @@ memutar berkas lokal maupun stream URL, dan menampilkan semuanya lewat **mimgui*
 - **Player** — kartu lagu (sampul, judul, artis, waktu, spektrum), baris transport, tab Pustaka/Antrean, dan panel daftar.
 - **Library** — daftar seluruh lagu, dengan pencarian. Klik satu baris untuk memutar.
 - **Queue** — antrean lagu yang akan diputar berikutnya.
-- **Settings** — stream URL, pindai ulang folder, dan lokasi folder musik. Tautan
-  YouTube disalin ke clipboard (dibuka manual di browser), stream audio langsung
-  diputar dari kolom yang sama.
+- **Settings** — stream URL, pindai ulang folder, dan lokasi folder musik. Stream
+  audio langsung diputar dari kolom yang sama; tautan YouTube hanya diberi pesan
+  (tidak bisa diputar di sini).
 - **About** — identitas skrip dan lisensinya.
 
 Navigasi memakai sidebar kiri. Halaman **Player** meniru konsep: kartu lagu yang sedang
@@ -98,7 +98,7 @@ mimgui, dan pencarian sampul yang diulang tiap frame.
 |---|---|
 | Pustaka kosong | Folder musik salah, atau berkas berekstensi lain. Cek lokasi folder di halaman Settings, lalu `/music refresh`. |
 | Tidak ada suara | Volume 0 atau muted; cek tombol speaker. Stream URL harus direct audio, bukan halaman YouTube. |
-| Tautan YouTube tidak terbuka | Tautan disalin ke clipboard, buka sendiri di browser. |
+| Tautan YouTube tidak diputar | Memang tidak didukung; pemutar hanya menerima stream audio langsung. |
 | Tulisan tidak pas | Skrip memakai `MONET_DPI_SCALE` bila ada, kalau tidak memakai resolusi layar. |
 | Lagu tidak diputar | Format di luar daftar (mp3, wav, wave, ogg, flac). |
 

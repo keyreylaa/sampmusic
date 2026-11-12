@@ -1412,38 +1412,18 @@ function Links.isDirectAudio(url)
     return url:find('^https?://') ~= nil and not Links.isYoutube(url)
 end
 
---- Buka tautan di aplikasi luar (YouTube / browser).
+--- Tautan non-audio tidak bisa diputar di sini.
 ---
---- JANGAN panggil OS_ServiceOpenLink dari libGTASA. Fungsi itu masuk ke
---- Java client (WarMedia.OpenLink -> startActivity). Kalau tidak ada
---- aplikasi yang bisa menangani Intent itu, Java melempar
---- ActivityNotFoundException, dan exception itu TERTINGGAL pending di
---- JNIEnv thread game. Panggilan JNI berikutnya (loader: input_status
---- saat sistem keyboard aktif) lalu memicu ART JniAbort -> SIGABRT.
---- Exception Java bukan error Lua, jadi pcall tidak bisa menangkapnya.
---- Karena itu tautan disalin ke clipboard, dan pengguna membukanya di
---- browser sendiri.
-function Links.openExternal(url)
-    return Links.tryClipboard(url)
-end
-
---- Teks yang dikirim ke clipboard harus ASCII: NewStringUTF di loader
---- melempar exception kalau byte-nya bukan UTF-8 yang valid, dan itu
---- berakhir jadi crash yang sama seperti di atas.
-local function asciiOnly(text)
-    return (text:gsub('[^ -~]', ''))
-end
-
-function Links.tryClipboard(url)
-    local safe = asciiOnly(url)
-    if safe == '' then return false end
-
-    local copied = pcall(setClipboardText, safe)
-    if copied then
-        Ui.message('tautan disalin ke clipboard; buka di browser')
-        return true
-    end
-    Ui.message('gagal menyalin tautan')
+--- JANGAN panggil OS_ServiceOpenLink dari libGTASA dan JANGAN memakai
+--- clipboard. Keduanya masuk ke Java client dan bisa melempar exception
+--- (startActivity tanpa aplikasi yang menangani, setPrimaryClip yang
+--- ditolak). Exception Java TERTINGGAL pending di JNIEnv thread game
+--- karena kode native tidak memeriksanya, dan panggilan JNI berikutnya
+--- (loader: input_status saat keyboard aktif) memicu ART JniAbort ->
+--- SIGABRT. pcall Lua tidak bisa menangkap exception Java, jadi satu-
+--- satunya cara aman adalah tidak memanggilnya sama sekali.
+function Links.unsupported(url)
+    Ui.message('tautan YouTube tidak bisa diputar di sini')
     return false
 end
 
@@ -2306,7 +2286,7 @@ local function drawSettingsPage()
     if changed and Ui.url ~= '' then
         local url = Ui.url:gsub('^%s+', ''):gsub('%s+$', '')
         if Links.isYoutube(url) then
-            Links.openExternal(url)
+            Links.unsupported(url)
         elseif Links.isDirectAudio(url) then
             local track = { path = url, title = url:match('([^/]+)$'), isUrl = true }
             if Player.play(track) then
