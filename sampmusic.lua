@@ -221,36 +221,59 @@ function Fs.read(path, offset, length)
     return data
 end
 
+--- Ukuran berkas tanpa lfs: buka dan seek ke akhir.
+local function fileSize(path)
+    local f = io.open(path, 'rb')
+    if not f then return nil end
+    local size = f:seek('end')
+    f:close()
+    return size
+end
+
+local function acceptPath(dir, fullPath, found)
+    local name = fullPath:match('([^/]+)$')
+    if not name then return end
+    local ext = name:match('%.([%w]+)$')
+    ext = ext and ext:lower() or ''
+    if not CFG.extensions[ext] then return end
+    local size = fileSize(fullPath)
+    if not size or size <= 0 then return end
+    found[#found + 1] = {
+        path = fullPath,
+        name = name:sub(1, #name - #ext - 1),
+        size = size,
+    }
+end
+
 --- Kembalikan daftar berkas audio di folder (level pertama saja).
 function Fs.listAudioFiles(dir)
-    local lfs = require 'lfs'
     local found = {}
 
-    -- lfs.dir mengembalikan iterator dan objek direktori; keduanya wajib
-    -- diteruskan ke loop for.
-    local ok, iter, state = pcall(lfs.dir, dir)
-    if not ok or not iter then return found end
+    -- io.popen sudah terbukti jalan di perangkat ini; lfs.dir tidak pernah
+    -- mengembalikan satu pun berkas padahal folder berisi dua mp3.
+    local ok, handle = pcall(io.popen, 'find "' .. dir .. '" -maxdepth 1 -type f')
+    if ok and handle then
+        for line in handle:lines() do
+            acceptPath(dir, line, found)
+        end
+        handle:close()
+    end
 
-    for name in iter, state do
-        if name ~= '.' and name ~= '..' then
-            local ext = name:match('%.([%w]+)$')
-            ext = ext and ext:lower() or ''
-            if CFG.extensions[ext] then
-                local path = dir .. '/' .. name
-                -- lfs.attributes(path, 'size') memberi ukurananya langsung,
-                -- bukan tabel. Kalau diperlakukan sebagai tabel, tidak satu
-                -- pun berkas masuk ke daftar dan pustaka selalu kosong.
-                local size = lfs.attributes(path, 'size')
-                if type(size) == 'number' and size > 0 then
-                    found[#found + 1] = {
-                        path = path,
-                        name = name:sub(1, #name - #ext - 1),
-                        size = size,
-                    }
+    if #found == 0 then
+        local oklfs, lfs = pcall(require, 'lfs')
+        if oklfs and lfs then
+            local okdir, iter, state = pcall(lfs.dir, dir)
+            if okdir and iter then
+                for name in iter, state do
+                    if name ~= '.' and name ~= '..' then
+                        acceptPath(dir, dir .. '/' .. name, found)
+                    end
                 end
             end
         end
     end
+
+    Log.info('listAudioFiles(%s): %d berkas cocok', dir, #found)
     return found
 end
 
@@ -1440,7 +1463,8 @@ function Library.tick()
                 artwork  = meta.artwork,
             }
         else
-            Log.once('meta-' .. entry.path, 'metadata gagal dibaca: %s', entry.path)
+            Log.once('meta-' .. entry.path, 'metadata gagal dibaca: %s (%s)',
+                entry.path, tostring(meta))
         end
     end
 
@@ -1944,6 +1968,8 @@ end
 
 --- Baris status: keadaan pemutar di kiri, tombol minimize & tutup di kanan.
 --- Judul jendela sudah ada di title bar, jadi tidak diulang di sini.
+local drawLibraryList, drawQueueList
+
 local PAGES = {
     { key = 'player',   label = 'Player',   icon = drawMusicNote },
     { key = 'library',  label = 'Library',  icon = drawLibraryIcon },
@@ -2193,7 +2219,7 @@ local function drawPage()
     end
 end
 
-local function drawLibraryList()
+drawLibraryList = function()
     local S = Runtime.scale()
     local rowHeight = 44 * S
     local thumb = 34 * S
@@ -2284,7 +2310,7 @@ local function drawLibraryList()
     end
 end
 
-local function drawQueueList()
+drawQueueList = function()
     local S = Runtime.scale()
     local rowHeight = 34 * S
 
