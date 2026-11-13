@@ -69,6 +69,7 @@ dl.GetClipRectMax = function() return Vec2(1600, 720) end
 local frame = { x = 0, y = 0, screen = Vec2(420, 40) }
 local cursorX, cursorY = 0, 0
 local frameCallbacks = {}
+local pendingInput = nil
 
 local imgui = {}
 imgui.ImVec2 = function(x, y) return Vec2(x, y) end
@@ -113,7 +114,13 @@ imgui.NewLine = function() end
 imgui.Separator = function() end
 imgui.Dummy = function() end
 imgui.SetNextItemWidth = function() end
-imgui.InputText = function() return false end
+imgui.InputText = function(id, buf, size)
+    if not pendingInput then return false end
+    local text = pendingInput
+    pendingInput = nil
+    ffi.copy(buf, text, #text + 1)
+    return true
+end
 imgui.SliderFloat = function() return false end
 imgui.CalcTextSize = function(text)
     text = tostring(text or '')
@@ -219,7 +226,11 @@ stub('createDirectory', function() return true end)
 stub('getScreenResolution', function() return 1600, 720 end)
 local chatCommands = {}
 stub('sampRegisterChatCommand', function(name, fn) chatCommands[name] = fn end)
-stub('loadAudioStream', function() return { stream = true } end)
+local openedPaths = {}
+stub('loadAudioStream', function(path)
+    openedPaths[#openedPaths + 1] = path
+    return { stream = true }
+end)
 stub('releaseAudioStream', function() end)
 stub('setAudioStreamState', function() end)
 stub('setAudioStreamVolume', function() end)
@@ -246,6 +257,57 @@ stub('wait', function() stop = true; error('__stop__', 0) end)
 
 -- --- muat skrip ----------------------------------------------------------
 package.preload['mimgui'] = function() return imgui end
+
+-- Jaringan tiruan: ssl.https/ltn12/cjson dari loader diganti stub, jadi uji
+-- ini tidak pernah menyentuh internet.
+local httpRequests = {}
+local httpResponses = {}
+local function fakeDecode(body)
+    if body:find('"data"', 1, true) then
+        return { data = { {
+            id = tonumber(body:match('"id":(%d+)')),
+            title = body:match('"title":"([^"]*)"'),
+            preview = body:match('"preview":"([^"]*)"'),
+            artist = { name = body:match('"artist":{"name":"([^"]*)"') },
+            album = { title = body:match('"album":{"title":"([^"]*)"') },
+        } } }
+    end
+    return {
+        title = body:match('"title":"([^"]*)"'),
+        author_name = body:match('"author_name":"([^"]*)"'),
+    }
+end
+package.preload['cjson'] = function()
+    return { decode = function(body) return fakeDecode(body) end }
+end
+package.preload['ltn12'] = function()
+    return { sink = { table = function(t)
+        return function(chunk)
+            if chunk then t[#t + 1] = chunk end
+            return 1
+        end
+    end } }
+end
+package.preload['ssl.https'] = function()
+    return {
+        TIMEOUT = 60,
+        request = function(req)
+            httpRequests[#httpRequests + 1] = req.url
+            local body
+            local lowerUrl = req.url:lower()
+            for pattern, value in pairs(httpResponses) do
+                if lowerUrl:find(pattern:lower(), 1, true) then body = value; break end
+            end
+            if not body then return nil, 404 end
+            if req.sink then
+                req.sink(body)
+                req.sink(nil)
+                return 1, 200
+            end
+            return 1, 200
+        end,
+    }
+end
 
 local chunk = assert(loadfile(scriptPath))
 local ok, err = pcall(chunk)
@@ -361,5 +423,95 @@ if failures == 0 then
     print('OK: ' .. #pages .. 'x frame GUI berjalan tanpa error')
 else
     print(failures .. ' frame gagal')
+    os.exit(1)
+end
+
+-- --- pencarian judul dan tautan -------------------------------------------
+-- Kolom Settings harus mengubah teks/tautan menjadi lagu yang benar-benar
+-- diputar: tautan YouTube/Spotify lewat oEmbed lalu Deezer, judul biasa
+-- langsung ke Deezer, dan tautan non-audio tidak boleh menyentuh BASS.
+os.execute('mkdir -p /tmp/monetloader/cache')
+httpResponses['youtube.com/oembed'] =
+    '{"title":"Virus","author_name":"Slank - Topic"}'
+httpResponses['open.spotify.com/oembed'] = '{"title":"Cinnamon Girl"}'
+httpResponses['q=Virus%20Slank'] = '{"data":[{"id":42,"title":"Virus",'
+    .. '"preview":"https://cdn.example/42.mp3","artist":{"name":"Slank"},'
+    .. '"album":{"title":"Peace and Love"}}]}'
+httpResponses['q=Cinnamon%20Girl'] = '{"data":[{"id":43,"title":"Cinnamon Girl",'
+    .. '"preview":"https://cdn.example/43.mp3","artist":{"name":"Lana Del Rey"},'
+    .. '"album":{"title":"Norman Fucking Rockwell"}}]}'
+httpResponses['cdn.example/42.mp3'] = string.rep('A', 8192)
+httpResponses['cdn.example/43.mp3'] = string.rep('B', 8192)
+httpResponses['example.com/song.mp3'] = string.rep('C', 8192)
+
+local function runSettings(text)
+    if chatCommands['music'] then pcall(chatCommands['music'], 'settings') end
+    pendingInput = text
+    local ok, err = runFrame()
+    if not ok then
+        failures = failures + 1
+        print('GAGAL frame settings "' .. text .. '": ' .. tostring(err))
+    end
+end
+
+local function lastOpened()
+    return openedPaths[#openedPaths]
+end
+
+local function requested(pattern)
+    for _, u in ipairs(httpRequests) do
+        if u:find(pattern, 1, true) then return u end
+    end
+end
+
+local before = #openedPaths
+runSettings('https://youtu.be/xbzT5_jIndg')
+if lastOpened() ~= '/tmp/monetloader/cache/deezer-42.mp3' then
+    failures = failures + 1
+    print('GAGAL tautan YouTube: diputar ' .. tostring(lastOpened()))
+end
+if not requested('youtube.com/oembed?format=json&url=https') then
+    failures = failures + 1
+    print('GAGAL: oEmbed YouTube tidak diminta')
+end
+if not requested('q=Virus%20Slank') then
+    failures = failures + 1
+    print('GAGAL: kueri Deezer tidak memuat judul dan penyanyi')
+end
+
+runSettings('https://open.spotify.com/track/2mdEsXPu8ZmkHRRtAdC09e?si=x')
+if lastOpened() ~= '/tmp/monetloader/cache/deezer-43.mp3' then
+    failures = failures + 1
+    print('GAGAL tautan Spotify: diputar ' .. tostring(lastOpened()))
+end
+
+runSettings('  cinnamon girl  ')
+if lastOpened() ~= '/tmp/monetloader/cache/deezer-43.mp3' then
+    failures = failures + 1
+    print('GAGAL pencarian judul: diputar ' .. tostring(lastOpened()))
+end
+
+-- tautan non-audio: pesan saja, BASS tidak boleh dibuka
+local beforeLink = #openedPaths
+runSettings('https://example.com/halaman')
+if #openedPaths ~= beforeLink then
+    failures = failures + 1
+    print('GAGAL tautan non-audio membuka stream')
+end
+
+-- berkas audio langsung: diunduh ke cache lalu diputar dari disk
+runSettings('https://example.com/song.mp3')
+if not (lastOpened() or ''):find('/cache/url%-%x+%.mp3$') then
+    failures = failures + 1
+    print('GAGAL tautan audio langsung: diputar ' .. tostring(lastOpened()))
+end
+if #openedPaths <= before then
+    failures = failures + 1
+    print('GAGAL: tidak ada lagu yang diputar dari kolom Settings')
+end
+
+if failures == 0 then
+    print('OK: pencarian judul dan tautan berjalan')
+else
     os.exit(1)
 end

@@ -4,7 +4,8 @@ Pemutar musik lokal untuk **GTA: San Andreas Multiplayer** di Android, berjalan 
 **MonetLoader** (LuaJIT / Lua 5.1).
 
 Skripnya memindai folder musik, membaca metadata berkas (judul, artis, album, durasi, sampul),
-memutar berkas lokal maupun stream URL, dan menampilkan semuanya lewat **mimgui**.
+memutar berkas lokal, dan mencari lagu dari judul atau tautan YouTube/Spotify, lalu
+menampilkan semuanya lewat **mimgui**.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -55,9 +56,9 @@ memutar berkas lokal maupun stream URL, dan menampilkan semuanya lewat **mimgui*
 - **Player** — kartu lagu (sampul, judul, artis, waktu, spektrum), baris transport, tab Pustaka/Antrean, dan panel daftar.
 - **Library** — daftar seluruh lagu, dengan pencarian. Klik satu baris untuk memutar.
 - **Queue** — antrean lagu yang akan diputar berikutnya.
-- **Settings** — stream URL, pindai ulang folder, dan lokasi folder musik. Stream
-  audio langsung diputar dari kolom yang sama; tautan YouTube hanya diberi pesan
-  (tidak bisa diputar di sini).
+- **Settings** — kolom "Cari lagu atau tempel tautan": ketik judul lagu, atau tempel tautan
+  YouTube/Spotify/berkas audio, lalu tekan **Putar**. Pindai ulang folder dan lokasi folder
+  musik juga ada di sini.
 - **About** — identitas skrip dan lisensinya.
 
 Navigasi memakai sidebar kiri. Halaman **Player** meniru konsep: kartu lagu yang sedang
@@ -77,6 +78,14 @@ Library, Queue, Settings, dan About menampilkan isinya saja.
 - **Audio** memakai BASS lewat API loader (`loadAudioStream`, `setAudioStreamState`, dan
   sejenisnya). Posisi lagu dibaca lewat FFI ke `libbass.so` supaya presisi, karena API loader
   tidak menyediakannya.
+- **Cari lagu dan tautan** memakai HTTPS dari Lua (LuaSec yang dibawa loader). Tautan
+  YouTube/Spotify dibaca judulnya lewat oEmbed resmi, judul biasa dipakai apa adanya, lalu
+  dicari di Deezer API. Hasilnya **preview 30 detik** MP3 — Deezer tidak memberi berkas
+  penuh tanpa akun, dan YouTube tidak bisa diekstrak dari Lua (butuh server penengah untuk
+  membongkar tanda tangannya). Tautan berkas audio langsung diunduh apa adanya.
+  Unduhan disimpan di `cache/` dan diputar sebagai berkas lokal, jadi tidak ada stream
+  jaringan yang tersendat saat server lambat. Satu permintaan menahan thread game maksimal
+  6 detik dan hanya terjadi saat tombol ditekan, bukan tiap frame.
 - **Antarmuka** memakai mimgui. Ukuran semua komponen mengikuti skala layar
   (`MONET_DPI_SCALE`, atau resolusi layar kalau variabel itu tidak ada).
 
@@ -97,8 +106,10 @@ mimgui, dan pencarian sampul yang diulang tiap frame.
 | Gejala | Penyebab dan cara pragmatis |
 |---|---|
 | Pustaka kosong | Folder musik salah, atau berkas berekstensi lain. Cek lokasi folder di halaman Settings, lalu `/music refresh`. |
-| Tidak ada suara | Volume 0 atau muted; cek tombol speaker. Stream URL harus direct audio, bukan halaman YouTube. |
-| Tautan YouTube tidak diputar | Memang tidak didukung; pemutar hanya menerima stream audio langsung. |
+| Tidak ada suara | Volume 0 atau muted; cek tombol speaker. |
+| Tautan YouTube/Spotify hanya berbunyi 30 detik | Itu batas Deezer tanpa akun. Berkas lokal tetap diputar penuh. |
+| "lagu tidak ditemukan" | Judul terlalu umum atau tidak ada di Deezer. Coba tambah nama penyanyi. |
+| "pencarian butuh modul HTTPS" | Loader terlalu tua; `ssl.https`, `ltn12`, dan `cjson` harus ada di `dist/lib`. |
 | Tulisan tidak pas | Skrip memakai `MONET_DPI_SCALE` bila ada, kalau tidak memakai resolusi layar. |
 | Lagu tidak diputar | Format di luar daftar (mp3, wav, wave, ogg, flac). |
 

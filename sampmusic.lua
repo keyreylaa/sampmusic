@@ -7,7 +7,7 @@
 
     Struktur berkas ini sengaja satu berkas, tapi tetap dipisah per modul:
     config, runtime, log, filesystem, metadata, artwork, audio, player,
-    queue, library, tautan, state-UI, GUI, dan titik masuk.
+    queue, library, web, tautan, state-UI, GUI, dan titik masuk.
 
     ---------------------------------------------------------------------
     Copyright (C) 2026 Sena
@@ -51,7 +51,7 @@ end
 -- (mis. Player memanggil Queue, Library memanggil Ui). Isi modul diisi
 -- pada bagiannya masing-masing.
 local Runtime, Log, Fs, Meta, Art, Audio = {}, {}, {}, {}, {}, {}
-local Player, Queue, Library, Links, Ui, Gui = {}, {}, {}, {}, {}, {}
+local Player, Queue, Library, Web, Links, Ui, Gui = {}, {}, {}, {}, {}, {}, {}
 
 local CFG = {
     title          = 'SAMP MUSIC',
@@ -67,6 +67,10 @@ local CFG = {
     defaultVolume  = 0.8,
     urlTimeout     = 20,       -- detik sebelum stream URL dianggap gagal
     messageTime    = 6,        -- detik pesan status tetap tampil
+    httpTimeout    = 6,        -- detik; satu permintaan HTTPS memblokir thread game
+    downloadMax    = 16 * 1024 * 1024,
+    cacheSubdir    = 'cache',  -- unduhan tautan disimpan di sini
+    deezerSearch   = 'https://api.deezer.com/search?limit=1&q=',
 }
 
 local CLOCK_MONOTONIC = 1
@@ -205,6 +209,38 @@ function Fs.listAudioFiles(dir)
 
     Log.info('listAudioFiles(%s): %d berkas cocok', dir, #found)
     return found
+end
+
+function Fs.ensureCacheDir()
+    Fs.cacheDir = Fs.root .. '/' .. CFG.cacheSubdir
+    if doesDirectoryExist(Fs.cacheDir) then return true end
+    local ok = pcall(createDirectory, Fs.cacheDir)
+    return ok and doesDirectoryExist(Fs.cacheDir)
+end
+
+--- Kunci berkas cache dari teks apa pun. FNV-1a 32-bit cukup: yang penting
+--- dua tautan berbeda tidak bertabrakan, bukan tahan serangan.
+--- Perkalian dipecah (x * 0x01000193 = x * 403 + x << 24) supaya hasilnya
+--- tetap tepat di double; x * 16777619 langsung kehilangan bit rendah.
+local function hashKey(text)
+    local h = 2166136261
+    for i = 1, #text do
+        h = bit.bxor(h, text:byte(i))
+        h = bit.tobit(h * 403 + bit.lshift(h, 24))
+    end
+    return string.format('%08x', h % 4294967296)
+end
+
+--- Unduh tautan sekali, lalu kembalikan path lokalnya.
+--- BASS memutar berkas lokal, jadi tidak ada stream jaringan yang bisa
+--- membuat frame tersendat saat server lambat atau tautannya salah.
+function Fs.cachedUrl(url, key)
+    if not Fs.ensureCacheDir() then return nil end
+    local path = Fs.cacheDir .. '/' .. (key or ('url-' .. hashKey(url))) .. '.mp3'
+    local size = fileSizeOf(path)
+    if size and size > 4096 then return path end
+    if not Web.download(url, path) then return nil end
+    return path
 end
 
 -- Semua offset di bawah adalah 0-based (titik awal byte pertama).
@@ -1069,9 +1105,20 @@ function Player.play(track)
 
     Player.closeStream()
 
-    local stream = Audio.open(track.path)
+    local path = track.path
+    if track.isUrl then
+        -- Tautan diunduh dulu ke folder cache: BASS lalu memutar berkas
+        -- lokal, sehingga tidak ada stream jaringan yang bisa tersendat.
+        path = Fs.cachedUrl(track.path, track.cacheKey)
+        if not path then
+            Log.error('gagal mengunduh: %s', track.path)
+            return false
+        end
+    end
+
+    local stream = Audio.open(path)
     if not stream then
-        Log.error('gagal membuka: %s', track.path)
+        Log.error('gagal membuka: %s', path)
         return false
     end
 
@@ -1400,31 +1447,187 @@ function Library.search(query)
     return found
 end
 
+--- Permintaan HTTPS dari Lua memakai LuaSec yang dibawa loader
+--- (ssl.https, socket, ltn12, cjson). Verifikasi sertifikat dimatikan karena
+--- loader tidak membawa CA bundle; yang diambil hanya hasil pencarian publik
+--- dan berkas preview, tanpa kredensial apa pun.
+---
+--- Satu permintaan memblokir thread game sampai selesai (maksimal
+--- CFG.httpTimeout detik). Itu disengaja: jalur ini hanya dipakai saat
+--- pengguna menekan tombol, bukan tiap frame.
+function Web.init()
+    if Web.ready ~= nil then return Web.ready end
+    local okHttps, https = pcall(require, 'ssl.https')
+    local okLtn, ltn12 = pcall(require, 'ltn12')
+    local okJson, json = pcall(require, 'cjson')
+    Web.https, Web.ltn12, Web.json = https, ltn12, json
+    Web.ready = okHttps and okLtn and okJson
+    if not Web.ready then
+        Log.once('web', 'pencarian butuh ssl.https, ltn12, dan cjson dari loader')
+    end
+    return Web.ready
+end
+
+function Web.encode(text)
+    return (text:gsub('[^%w%-%._~]', function(c)
+        return string.format('%%%02X', c:byte())
+    end))
+end
+
+--- GET satu URL. Mengembalikan body (string) atau nil.
+function Web.get(url)
+    if not Web.init() then return nil end
+    local chunks = {}
+    Web.https.TIMEOUT = CFG.httpTimeout
+    local ok, code = Web.https.request {
+        url = url,
+        sink = Web.ltn12.sink.table(chunks),
+        headers = { ['User-Agent'] = 'SAMP-MUSIC/1.1' },
+    }
+    if not ok or code ~= 200 then
+        Log.once('web-' .. tostring(code), 'permintaan HTTPS gagal: %s (%s)', url, tostring(code))
+        return nil
+    end
+    return table.concat(chunks)
+end
+
+--- GET lalu decode JSON. Mengembalikan tabel atau nil.
+function Web.jsonGet(url)
+    local body = Web.get(url)
+    if not body then return nil end
+    local ok, data = pcall(Web.json.decode, body)
+    if not ok or type(data) ~= 'table' then
+        Log.once('web-json', 'jawaban bukan JSON: %s', url)
+        return nil
+    end
+    return data
+end
+
+--- Unduh URL ke path. Mengembalikan true bila berkas utuh.
+function Web.download(url, path)
+    if not Web.init() then return false end
+    local file = io.open(path, 'wb')
+    if not file then return false end
+
+    local written = 0
+    local overflow = false
+    local sink = function(chunk)
+        if not chunk then return 1 end
+        written = written + #chunk
+        if written > CFG.downloadMax then
+            overflow = true
+            return nil
+        end
+        return file:write(chunk) and 1 or nil
+    end
+
+    Web.https.TIMEOUT = CFG.httpTimeout
+    local ok, code = Web.https.request {
+        url = url,
+        sink = sink,
+        headers = { ['User-Agent'] = 'SAMP-MUSIC/1.1' },
+    }
+    file:close()
+
+    if not ok or code ~= 200 or overflow or written < 4096 then
+        os.remove(path)
+        Log.error('unduhan gagal: %s (%s, %d byte)', url, tostring(code), written)
+        return false
+    end
+    return true
+end
+
 function Links.isYoutube(url)
     return url:find('youtu%.be/') ~= nil
         or url:find('youtube%.com/watch') ~= nil
         or url:find('youtube%.com/playlist') ~= nil
         or url:find('youtube%.com/shorts') ~= nil
-        or url:find('m%.youtube%.com/') ~= nil
 end
 
-function Links.isDirectAudio(url)
-    return url:find('^https?://') ~= nil and not Links.isYoutube(url)
+function Links.isSpotify(url)
+    return url:find('open%.spotify%.com/') ~= nil
 end
 
---- Tautan non-audio tidak bisa diputar di sini.
+--- Tautan berkas audio langsung (berekstensi yang didukung BASS).
+function Links.isAudioUrl(url)
+    if url:find('^https?://') == nil then return false end
+    local path = url:match('^[^?]+') or url
+    local ext = path:match('%.([%w]+)$')
+    return ext ~= nil and CFG.extensions[ext:lower()] == true
+end
+
+--- Judul dari tautan YouTube/Spotify lewat oEmbed resmi mereka.
+--- Keduanya menjawab JSON tanpa kunci API.
+function Links.titleFromLink(url)
+    local endpoint = Links.isYoutube(url)
+        and 'https://www.youtube.com/oembed?format=json&url='
+        or 'https://open.spotify.com/oembed?url='
+    local data = Web.jsonGet(endpoint .. Web.encode(url))
+    if not data or type(data.title) ~= 'string' then return nil end
+    local title = data.title:gsub('%s+%-%s+Topic$', '')
+    local artist = type(data.author_name) == 'string'
+        and data.author_name:gsub('%s+%-%s+Topic$', '') or nil
+    return title, artist
+end
+
+--- Cari satu lagu di Deezer. Hasilnya preview 30 detik berformat MP3:
+--- Deezer tidak memberi berkas penuh tanpa akun, dan YouTube tidak bisa
+--- diekstrak dari Lua (butuh server penengah untuk membongkar tanda
+--- tangannya). Preview tetap diputar utuh lewat BASS.
+function Links.searchDeezer(query)
+    local data = Web.jsonGet(CFG.deezerSearch .. Web.encode(query))
+    local hit = data and data.data and data.data[1]
+    if not hit or type(hit.preview) ~= 'string' then return nil end
+    return {
+        path     = hit.preview,
+        cacheKey = 'deezer-' .. tostring(hit.id or hashKey(hit.preview)),
+        title    = hit.title,
+        artist   = hit.artist and hit.artist.name,
+        album    = hit.album and hit.album.title,
+        isUrl    = true,
+        preview  = true,
+    }
+end
+
+--- Ubah isi kolom menjadi track yang bisa diputar.
+--- Teks biasa dicari sebagai judul; tautan YouTube/Spotify diambil judulnya
+--- dulu lewat oEmbed, lalu dicari lagu yang sama di Deezer.
 ---
 --- JANGAN panggil OS_ServiceOpenLink dari libGTASA dan JANGAN memakai
---- clipboard. Keduanya masuk ke Java client dan bisa melempar exception
---- (startActivity tanpa aplikasi yang menangani, setPrimaryClip yang
---- ditolak). Exception Java TERTINGGAL pending di JNIEnv thread game
---- karena kode native tidak memeriksanya, dan panggilan JNI berikutnya
---- (loader: input_status saat keyboard aktif) memicu ART JniAbort ->
---- SIGABRT. pcall Lua tidak bisa menangkap exception Java, jadi satu-
---- satunya cara aman adalah tidak memanggilnya sama sekali.
-function Links.unsupported(url)
-    Ui.message('tautan YouTube tidak bisa diputar di sini')
-    return false
+--- clipboard untuk membuka tautan. Keduanya masuk ke Java client dan bisa
+--- melempar exception (startActivity tanpa aplikasi yang menangani,
+--- setPrimaryClip yang ditolak). Exception Java TERTINGGAL pending di
+--- JNIEnv thread game karena kode native tidak memeriksanya, dan panggilan
+--- JNI berikutnya (loader: input_status saat keyboard aktif) memicu ART
+--- JniAbort -> SIGABRT. pcall Lua tidak bisa menangkap exception Java, jadi
+--- satu-satunya cara aman adalah tidak memanggilnya sama sekali.
+function Links.resolve(input)
+    local text = input:gsub('^%s+', ''):gsub('%s+$', '')
+    if text == '' then return nil, 'kolom pencarian masih kosong' end
+
+    if Links.isAudioUrl(text) then
+        return { path = text, title = text:match('([^/]+)$'), isUrl = true }
+    end
+
+    if text:find('^https?://') and not (Links.isYoutube(text) or Links.isSpotify(text)) then
+        return nil, 'tautan itu bukan berkas audio'
+    end
+
+    if not Web.init() then
+        return nil, 'pencarian butuh modul HTTPS dari loader'
+    end
+
+    local query = text
+    if Links.isYoutube(text) or Links.isSpotify(text) then
+        local title, artist = Links.titleFromLink(text)
+        if not title then return nil, 'judul tautan tidak terbaca' end
+        -- Penyanyi ikut dicari supaya lagu berjudul sama tidak tertukar.
+        query = artist and (title .. ' ' .. artist) or title
+    end
+
+    local track = Links.searchDeezer(query)
+    if not track then return nil, 'lagu tidak ditemukan: ' .. query end
+    return track
 end
 
 function Ui.init()
@@ -2265,7 +2468,7 @@ local function drawSettingsPage()
     local width = imgui.GetContentRegionAvail().x
 
     textAt(imgui.GetWindowDrawList(), imgui.GetCursorScreenPos().x,
-        imgui.GetCursorScreenPos().y, 'Stream URL', PALETTE.text)
+        imgui.GetCursorScreenPos().y, 'Cari lagu atau tempel tautan', PALETTE.text)
     imgui.Dummy(imgui.ImVec2(0, lineHeight() + 4 * S))
 
     if not Gui.urlBuffer then
@@ -2279,24 +2482,23 @@ local function drawSettingsPage()
     Ui.url = ffi.string(Gui.urlBuffer)
 
     imgui.SameLine(0, 6 * S)
-    if imgui.Button('Buka', imgui.ImVec2(74 * S, 0)) then
+    if imgui.Button('Putar', imgui.ImVec2(74 * S, 0)) then
         changed = true
     end
 
     if changed and Ui.url ~= '' then
-        local url = Ui.url:gsub('^%s+', ''):gsub('%s+$', '')
-        if Links.isYoutube(url) then
-            Links.unsupported(url)
-        elseif Links.isDirectAudio(url) then
-            local track = { path = url, title = url:match('([^/]+)$'), isUrl = true }
-            if Player.play(track) then
-                Queue.add(track)
-                Ui.message('memutar stream: %s', track.title)
-            else
-                Ui.message('gagal membuka stream URL')
-            end
+        local track, reason = Links.resolve(Ui.url)
+        if not track then
+            Ui.message('%s', reason)
+        elseif not Player.play(track) then
+            Ui.message('gagal memutar: %s', track.title or track.path)
         else
-            Ui.message('URL tidak dikenali')
+            Queue.add(track)
+            local label = track.artist and (track.title .. ' - ' .. track.artist)
+                or (track.title or track.path)
+            Ui.message(track.preview and 'preview 30 dtk: %s' or 'memutar: %s', label)
+            ffi.fill(Gui.urlBuffer, 256, 0)
+            Ui.url = ''
         end
     end
 
@@ -2319,10 +2521,14 @@ local function drawSettingsPage()
     textAt(imgui.GetWindowDrawList(), imgui.GetCursorScreenPos().x,
         imgui.GetCursorScreenPos().y, ellipsize(folder, width), PALETTE.textDim)
     imgui.Dummy(imgui.ImVec2(0, lineHeight() + 4 * S))
-    local hint = 'Letakkan berkas .mp3, .wav, .ogg atau .flac di folder itu.'
-    textAt(imgui.GetWindowDrawList(), imgui.GetCursorScreenPos().x,
-        imgui.GetCursorScreenPos().y, ellipsize(hint, width), PALETTE.textDim)
-    imgui.Dummy(imgui.ImVec2(0, lineHeight()))
+    local hint = 'Ketik judul lagu atau tempel tautan YouTube/Spotify: hasilnya '
+        .. 'preview 30 detik dari Deezer, diunduh ke ' .. CFG.cacheSubdir .. '/. '
+        .. 'Berkas .mp3, .wav, .ogg, .flac di folder itu tetap diputar penuh.'
+    for _, part in ipairs(wrapText(hint, width)) do
+        textAt(imgui.GetWindowDrawList(), imgui.GetCursorScreenPos().x,
+            imgui.GetCursorScreenPos().y, part, PALETTE.textDim)
+        imgui.Dummy(imgui.ImVec2(0, lineHeight()))
+    end
 end
 
 local function drawAboutPage()
